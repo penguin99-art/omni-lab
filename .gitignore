@@ -1,0 +1,29 @@
+# Model weights
+models/
+
+# SSL certificates (generated per-machine)
+ssl_cert.pem
+ssl_key.pem
+
+# Build artifacts
+llama.cpp-omni/build/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Runtime output
+output/
+*.log
+/tmp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

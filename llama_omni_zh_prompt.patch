@@ -1,0 +1,35 @@
+diff --git a/tools/omni/omni.cpp b/tools/omni/omni.cpp
+index 79536b5..74d556a 100644
+--- a/tools/omni/omni.cpp
++++ b/tools/omni/omni.cpp
+@@ -3516,13 +3516,11 @@ struct omni_context * omni_init(struct common_params * params, int media_type, b
+     // 注意: voice_clone_prompt 是 system prompt 的 prefix，assistant_prompt 是 system prompt 的 suffix
+     //       stream_decode 会添加实际的 assistant generation prompt
+     if (duplex_mode) {
+-        // 🔧 [与 Python 对齐] Audio 双工模式：嵌入参考音频
+-        // 双工模式不需要 <|im_start|>user\n，用 <unit> 标记用户输入
+-        ctx_omni->audio_voice_clone_prompt = "<|im_start|>system\nStreaming Duplex Conversation! You are a helpful assistant.\n<|audio_start|>";
++        // 🔧 双工模式：使用中文系统提示词（中文 prompt 决定模型输出中文语音）
++        ctx_omni->audio_voice_clone_prompt = "<|im_start|>system\n流式全双工对话。你是一个友好的中文助手，请用普通话回答。\n<|audio_start|>";
+         ctx_omni->audio_assistant_prompt = "<|audio_end|><|im_end|>\n";
+         
+-        // 🔧 [修复] Omni 双工模式：也需要嵌入参考音频，格式与 Audio 双工相同
+-        ctx_omni->omni_voice_clone_prompt = "<|im_start|>system\nStreaming Duplex Conversation! You are a helpful assistant.\n<|audio_start|>";
++        ctx_omni->omni_voice_clone_prompt = "<|im_start|>system\n流式全双工对话。你是一个友好的中文助手，请用普通话回答。\n<|audio_start|>";
+         ctx_omni->omni_assistant_prompt = "<|audio_end|><|im_end|>\n";
+     } else {
+         // 🔧 [与 Python 对齐] 非双工模式 Audio 格式 (audio_assistant 模式)
+@@ -4180,10 +4178,10 @@ void omni_set_language(struct omni_context * ctx_omni, const std::string & lang)
+     print_with_timestamp("omni_set_language: setting language to '%s'\n", lang.c_str());
+     
+     if (ctx_omni->duplex_mode) {
+-        // 双工模式：prompt 固定使用英文（与 Python 对齐）
+-        ctx_omni->audio_voice_clone_prompt = "<|im_start|>system\nStreaming Duplex Conversation! You are a helpful assistant.\n<|audio_start|>";
++        // 双工模式：使用中文系统提示词
++        ctx_omni->audio_voice_clone_prompt = "<|im_start|>system\n流式全双工对话。你是一个友好的中文助手，请用普通话回答。\n<|audio_start|>";
+         ctx_omni->audio_assistant_prompt = "<|audio_end|><|im_end|>\n";
+-        ctx_omni->omni_voice_clone_prompt = "<|im_start|>system\nStreaming Duplex Conversation! You are a helpful assistant.\n<|audio_start|>";
++        ctx_omni->omni_voice_clone_prompt = "<|im_start|>system\n流式全双工对话。你是一个友好的中文助手，请用普通话回答。\n<|audio_start|>";
+         ctx_omni->omni_assistant_prompt = "<|audio_end|><|im_end|>\n";
+     } else {
+         // 非双工模式（audio_assistant 模式）：根据语言设置 prompt
