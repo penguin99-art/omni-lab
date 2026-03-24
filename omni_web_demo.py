@@ -465,7 +465,7 @@ video{width:100%;border-radius:8px;background:#000;margin-bottom:10px}
 const CHUNK_MS=1000, PLAYBACK_SR=24000, PLAYBACK_DELAY_MS=250;
 let ws=null, mediaStream=null, audioCtx=null, analyser=null;
 let active=false, timer=null, micChunks=[];
-let playCtx=null, nextPlayTime=0, pendingBufs=0;
+let playCtx=null, nextPlayTime=0, pendingBufs=0, ttsPlaying=false;
 let inflight=0;
 let curBotEl=null;  // current bot message element (for merging text)
 let recognition=null; // speech recognition
@@ -517,6 +517,14 @@ function captureFrame(){
   return c.toDataURL('image/jpeg',0.6).split(',')[1];
 }
 
+// ─── recognition pause/resume to avoid TTS echo ───
+function pauseRecognition(){
+  if(recognition)try{recognition.abort()}catch(_){}
+}
+function resumeRecognition(){
+  if(recognition&&active)try{recognition.start()}catch(_){}
+}
+
 // ─── gapless PCM playback ───
 function scheduleAudio(pcmB64,sr){
   if(!playCtx)return;
@@ -535,9 +543,14 @@ function scheduleAudio(pcmB64,sr){
   src.start(nextPlayTime);
   nextPlayTime+=buf.duration;
   pendingBufs++;
+  if(!ttsPlaying){ttsPlaying=true; pauseRecognition();}
   src.onended=()=>{
     pendingBufs--;
-    if(pendingBufs<=0) setSt('listen','正在听...');
+    if(pendingBufs<=0){
+      ttsPlaying=false;
+      resumeRecognition();
+      setSt('listen','正在听...');
+    }
   };
 }
 
