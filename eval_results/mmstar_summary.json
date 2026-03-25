@@ -1,0 +1,41 @@
+{
+  "model": "MiniCPM-o-4_5-Q4_K_M.gguf",
+  "benchmark": "MMStar",
+  "total": 300,
+  "correct": 200,
+  "accuracy": 66.67,
+  "official_bf16": 73.1,
+  "by_category": {
+    "coarse perception": {
+      "total": 56,
+      "correct": 42,
+      "accuracy": 75.0
+    },
+    "fine-grained perception": {
+      "total": 53,
+      "correct": 35,
+      "accuracy": 66.04
+    },
+    "instance reasoning": {
+      "total": 43,
+      "correct": 35,
+      "accuracy": 81.4
+    },
+    "logical reasoning": {
+      "total": 46,
+      "correct": 28,
+      "accuracy": 60.87
+    },
+    "math": {
+      "total": 50,
+      "correct": 33,
+      "accuracy": 66.0
+    },
+    "science & technology": {
+      "total": 52,
+      "correct": 27,
+      "accuracy": 51.92
+    }
+  },
+  "updated_at": "2026-03-25T09:13:20.618898"
+}
