@@ -2,19 +2,19 @@
   "model": "MiniCPM-o-4_5-Q4_K_M.gguf",
   "benchmark": "MMStar",
   "total": 300,
-  "correct": 200,
-  "accuracy": 66.67,
+  "correct": 211,
+  "accuracy": 70.33,
   "official_bf16": 73.1,
   "by_category": {
     "coarse perception": {
       "total": 56,
-      "correct": 42,
-      "accuracy": 75.0
+      "correct": 43,
+      "accuracy": 76.79
     },
     "fine-grained perception": {
       "total": 53,
-      "correct": 35,
-      "accuracy": 66.04
+      "correct": 34,
+      "accuracy": 64.15
     },
     "instance reasoning": {
       "total": 43,
@@ -23,13 +23,13 @@
     },
     "logical reasoning": {
       "total": 46,
-      "correct": 28,
-      "accuracy": 60.87
+      "correct": 32,
+      "accuracy": 69.57
     },
     "math": {
       "total": 50,
-      "correct": 33,
-      "accuracy": 66.0
+      "correct": 40,
+      "accuracy": 80.0
     },
     "science & technology": {
       "total": 52,
@@ -37,5 +37,5 @@
       "accuracy": 51.92
     }
   },
-  "updated_at": "2026-03-25T09:13:20.618898"
+  "updated_at": "2026-03-25T09:51:45.604912"
 }

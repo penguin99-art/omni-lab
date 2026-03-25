@@ -67,7 +67,7 @@ def query_model(base_url, image_b64, question, timeout=120):
         json={
             "messages": messages,
             "temperature": 0.1,
-            "max_tokens": 256,
+            "max_tokens": 1024,
             "chat_template_kwargs": {"enable_thinking": False},
         },
         timeout=timeout,
