@@ -7,6 +7,12 @@ ssl_key.pem
 
 # Build artifacts
 llama.cpp-omni/build/
+llama.cpp-eval/
+
+# Temporary eval/analysis files
+eval_results_maxtoken256/
+_agent_cmd_report.txt
+analyze_results.py
 
 # Python
 __pycache__/

@@ -40,7 +40,9 @@ from flask_sock import Sock
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_DIR = BASE_DIR / "models" / "MiniCPM-o-4_5-gguf"
 
-WORK_DIR = Path(tempfile.mkdtemp(prefix="omni_web_"))
+SHM_BASE = Path("/dev/shm")
+_tmpdir_base = SHM_BASE if SHM_BASE.is_dir() else Path(tempfile.gettempdir())
+WORK_DIR = Path(tempfile.mkdtemp(prefix="omni_web_", dir=str(_tmpdir_base)))
 AUDIO_DIR = WORK_DIR / "audio"
 FRAME_DIR = WORK_DIR / "frames"
 OUTPUT_DIR = WORK_DIR / "output"
@@ -50,6 +52,57 @@ for d in [AUDIO_DIR, FRAME_DIR, OUTPUT_DIR]:
 app = Flask(__name__)
 sock = Sock(app)
 
+SCENARIOS = {
+    "default": {
+        "name": "自由对话",
+        "icon": "💬",
+        "system_prompt": "你是一个友好的中文助手，请用普通话回答。",
+        "description": "通用全双工语音对话模式",
+    },
+    "proactive": {
+        "name": "主动提醒助手",
+        "icon": "👀",
+        "system_prompt": (
+            "你是一个主动观察的 AI 助手。你会通过摄像头持续观察用户的环境和行为。"
+            "当你发现用户可能需要帮助、休息、或有值得评论的事情时，你应该主动开口提醒。"
+            "例如：用户长时间盯屏幕 → 提醒休息；看到杯子空了 → 建议喝水；"
+            "看到有趣的物品 → 主动评论。保持友好和有趣，不要过于频繁地打扰。用普通话交流。"
+        ),
+        "description": "AI 主动观察并提醒，像科幻电影中的 AI 管家",
+    },
+    "translator": {
+        "name": "实时翻译官",
+        "icon": "🌐",
+        "system_prompt": (
+            "你是一个实时翻译助手。当你通过摄像头看到外文（英文、日文、韩文等）文字时，"
+            "立即朗读并翻译成中文。当你听到外语语音时，实时翻译成中文。"
+            "当你听到中文时，翻译成英文。翻译要准确、自然、口语化。用普通话交流。"
+        ),
+        "description": "对着外文菜单/路牌实时翻译，或语音口译",
+    },
+    "math_tutor": {
+        "name": "AI 数学家教",
+        "icon": "📐",
+        "system_prompt": (
+            "你是一个耐心的数学老师。当你通过摄像头看到数学题目（手写或打印）时，"
+            "先识别题目内容，然后用清晰的语言一步步讲解解题过程和思路。"
+            "鼓励学生思考，用简单的比喻解释复杂概念。"
+            "如果学生追问'为什么'，要耐心详细地解释。用普通话交流。"
+        ),
+        "description": "拍照识别数学题，语音讲解解题过程",
+    },
+    "commentator": {
+        "name": "AI 看片解说员",
+        "icon": "🎬",
+        "system_prompt": (
+            "你是一个风趣幽默的解说员。你会对摄像头中看到的画面进行实时解说和点评，"
+            "就像体育解说员或电影旁白一样生动有趣。描述你看到的内容，"
+            "加入你的观点和评论，让观看者觉得有趣。用户可以随时打断提问。用普通话交流。"
+        ),
+        "description": "实时描述和点评视频/画面，支持互动提问",
+    },
+}
+
 state = {
     "llama_host": "127.0.0.1",
     "llama_port": 9060,
@@ -58,6 +111,8 @@ state = {
     "audio_idx": 0,
     "frame_idx": 0,
     "round_idx": 0,
+    "scenario": "default",
+    "timing_history": [],
 }
 state_lock = threading.Lock()
 
@@ -161,6 +216,18 @@ def _do_decode():
     return full_text, is_listen, is_end_of_turn
 
 
+def _read_wav_b64(wav_path: Path):
+    """Read a WAV file and return dict with base64-encoded PCM + sample rate."""
+    try:
+        if wav_path.stat().st_size < 100:
+            return None
+        data, sr = sf.read(str(wav_path), dtype="float32")
+        pcm_b64 = base64.b64encode(data.astype(np.float32).tobytes()).decode("ascii")
+        return {"pcm": pcm_b64, "sr": sr}
+    except Exception:
+        return None
+
+
 def _collect_new_wavs(cursor):
     """Collect WAV files starting from cursor index. Returns (list, new_cursor)."""
     results = []
@@ -171,15 +238,12 @@ def _collect_new_wavs(cursor):
         wav_path = tts_dir / f"wav_{cursor}.wav"
         if not wav_path.exists():
             break
-        try:
-            if wav_path.stat().st_size < 100:
-                break
-            data, sr = sf.read(str(wav_path), dtype="float32")
-            pcm_b64 = base64.b64encode(data.astype(np.float32).tobytes()).decode("ascii")
-            results.append({"i": cursor, "pcm": pcm_b64, "sr": sr})
-            cursor += 1
-        except Exception:
+        entry = _read_wav_b64(wav_path)
+        if entry is None:
             break
+        entry["i"] = cursor
+        results.append(entry)
+        cursor += 1
     return results, cursor
 
 
@@ -194,19 +258,32 @@ def duplex_ws(ws):
     wav_cursor = [0]
     tts_stop = threading.Event()
 
+    send_lock = threading.Lock()
+    ws_closed = [False]
+
+    def safe_ws_send(data):
+        if ws_closed[0]:
+            return False
+        try:
+            with send_lock:
+                ws.send(data)
+            return True
+        except Exception:
+            ws_closed[0] = True
+            return False
+
     def tts_pusher():
         """Background thread: polls for TTS WAV files and pushes them via WS."""
-        while not tts_stop.is_set():
-            try:
-                new_wavs, wav_cursor[0] = _collect_new_wavs(wav_cursor[0])
-                if new_wavs:
-                    ws.send(json.dumps({
-                        "type": "audio",
-                        "chunks": new_wavs,
-                    }, ensure_ascii=False))
-            except Exception:
-                break
-            tts_stop.wait(0.1)
+        print("[TTS] pusher thread started", flush=True)
+        while not tts_stop.is_set() and not ws_closed[0]:
+            new_wavs, wav_cursor[0] = _collect_new_wavs(wav_cursor[0])
+            if new_wavs:
+                ok = safe_ws_send(json.dumps({"type": "audio", "chunks": new_wavs}, ensure_ascii=False))
+                if not ok:
+                    break
+                print(f"[TTS] pushed {len(new_wavs)} chunk(s), cursor={wav_cursor[0]}", flush=True)
+            tts_stop.wait(0.08)
+        print("[TTS] pusher thread exiting", flush=True)
 
     tts_thread = None
 
@@ -222,7 +299,7 @@ def duplex_ws(ws):
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
-                ws.send(json.dumps({"type": "error", "error": "invalid json"}))
+                safe_ws_send(json.dumps({"type": "error", "error": "invalid json"}))
                 continue
 
             msg_type = msg.get("type", "")
@@ -231,31 +308,35 @@ def duplex_ws(ws):
                 try:
                     media_type = msg.get("media_type", 2)
                     duplex = msg.get("duplex", True)
+                    scenario_id = msg.get("scenario", "default")
+                    with state_lock:
+                        state["scenario"] = scenario_id
+                        state["timing_history"] = []
 
-                    # Clean up old TTS WAV files before starting new session
+                    import shutil
                     tts_dir = OUTPUT_DIR / "tts_wav"
                     if tts_dir.exists():
-                        import shutil
                         shutil.rmtree(tts_dir, ignore_errors=True)
-                        tts_dir.mkdir(parents=True, exist_ok=True)
-                        print("[prepare] cleaned old TTS WAV files", flush=True)
+                    tts_dir.mkdir(parents=True, exist_ok=True)
+                    print(f"[prepare] scenario={scenario_id}, cleaned TTS WAV files", flush=True)
 
                     _do_init(media_type, duplex)
                     wav_cursor[0] = 0
 
                     if tts_thread is None or not tts_thread.is_alive():
+                        tts_stop.clear()
                         tts_thread = threading.Thread(target=tts_pusher, daemon=True)
                         tts_thread.start()
 
-                    ws.send(json.dumps({"type": "prepared"}))
+                    safe_ws_send(json.dumps({"type": "prepared", "scenario": scenario_id}))
                 except Exception as e:
-                    ws.send(json.dumps({"type": "error", "error": str(e)}))
+                    safe_ws_send(json.dumps({"type": "error", "error": str(e)}))
 
             elif msg_type == "audio_chunk":
                 audio_b64 = msg.get("audio")
                 frame_b64 = msg.get("frame")
                 if not audio_b64:
-                    ws.send(json.dumps({"type": "error", "error": "no audio"}))
+                    safe_ws_send(json.dumps({"type": "error", "error": "no audio"}))
                     continue
 
                 try:
@@ -274,30 +355,37 @@ def duplex_ws(ws):
                           f"total={total_ms:.0f}ms text='{text[:40]}'",
                           flush=True)
 
-                    ws.send(json.dumps({
+                    timing = {
+                        "prefill": round(prefill_ms),
+                        "decode": round(decode_ms),
+                        "total": round(total_ms),
+                        "ts": round(time.time() * 1000),
+                    }
+                    with state_lock:
+                        state["timing_history"].append(timing)
+                        if len(state["timing_history"]) > 500:
+                            state["timing_history"] = state["timing_history"][-200:]
+
+                    safe_ws_send(json.dumps({
                         "type": "result",
                         "text": text,
                         "is_listen": is_listen,
                         "end_of_turn": is_end,
-                        "timing": {"prefill": round(prefill_ms),
-                                   "decode": round(decode_ms),
-                                   "total": round(total_ms)},
+                        "timing": timing,
                     }, ensure_ascii=False))
 
                 except Exception as e:
                     print(f"[ERROR] audio_chunk: {e}", flush=True)
-                    traceback.print_exc()
-                    try:
-                        ws.send(json.dumps({"type": "error", "error": str(e)}))
-                    except Exception:
+                    if ws_closed[0]:
                         break
+                    safe_ws_send(json.dumps({"type": "error", "error": str(e)}))
 
             elif msg_type == "stop":
                 try:
                     requests.post(llama_url("/v1/stream/break"), json={}, timeout=5)
                 except Exception:
                     pass
-                ws.send(json.dumps({"type": "stopped"}))
+                safe_ws_send(json.dumps({"type": "stopped"}))
                 break
 
             elif msg_type == "reset":
@@ -307,15 +395,19 @@ def duplex_ws(ws):
                         state["round_idx"] = 0
                         state["prefill_cnt"] = 1
                     wav_cursor[0] = 0
-                    ws.send(json.dumps({"type": "reset_done"}))
+                    safe_ws_send(json.dumps({"type": "reset_done"}))
                 except Exception as e:
-                    ws.send(json.dumps({"type": "error", "error": str(e)}))
+                    safe_ws_send(json.dumps({"type": "error", "error": str(e)}))
 
     finally:
         tts_stop.set()
         if tts_thread and tts_thread.is_alive():
             tts_thread.join(timeout=2)
-        print("[WS] duplex session ended", flush=True)
+        try:
+            requests.post(llama_url("/v1/stream/break"), json={}, timeout=3)
+        except Exception:
+            pass
+        print("[WS] duplex session ended (stream break sent)", flush=True)
 
 
 # ─── HTTP ─────────────────────────────────────────────────────
@@ -331,13 +423,21 @@ def api_status():
                     "round_idx": state["round_idx"]})
 
 
+@app.route("/api/scenarios")
+def api_scenarios():
+    return jsonify({k: {"name": v["name"], "icon": v["icon"], "description": v["description"]}
+                    for k, v in SCENARIOS.items()})
+
+
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
     """Text chat via llama-server's /v1/chat/completions"""
     data = request.get_json(force=True)
     user_msg = data.get("message", "")
     history = data.get("history", [])
-    messages = [{"role": "system", "content": "你是一个友好的中文助手，请用普通话回答。"}]
+    scenario_id = data.get("scenario", state.get("scenario", "default"))
+    sys_prompt = SCENARIOS.get(scenario_id, SCENARIOS["default"])["system_prompt"]
+    messages = [{"role": "system", "content": sys_prompt}]
     for h in history:
         messages.append({"role": h["role"], "content": h["content"]})
     messages.append({"role": "user", "content": user_msg})
@@ -355,6 +455,13 @@ def api_chat():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/timing_history")
+def api_timing_history():
+    """Return recent timing data for the profiling dashboard."""
+    with state_lock:
+        return jsonify(state["timing_history"][-200:])
+
+
 @app.route("/")
 def index():
     return HTML_PAGE
@@ -367,58 +474,72 @@ HTML_PAGE = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MiniCPM-o 4.5 全双工对话</title>
+<title>omni-lab · MiniCPM-o 4.5</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Segoe UI',system-ui,sans-serif;background:#0a0a0f;color:#e0e0e8;min-height:100vh}
-.hdr{background:linear-gradient(135deg,#1a1a2e,#16213e);padding:16px 24px;border-bottom:1px solid #2a2a4a}
-.hdr h1{font-size:18px;color:#a0c4ff}.hdr p{font-size:12px;color:#888;margin-top:2px}
-.main{display:flex;gap:12px;padding:12px;max-width:1400px;margin:0 auto;height:calc(100vh - 70px)}
+.hdr{background:linear-gradient(135deg,#1a1a2e,#16213e);padding:14px 24px;border-bottom:1px solid #2a2a4a;display:flex;align-items:center;gap:16px}
+.hdr h1{font-size:17px;color:#a0c4ff;white-space:nowrap}.hdr p{font-size:11px;color:#888;margin-top:1px}
+.scenario-sel{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.sc-btn{padding:6px 12px;border:1px solid #2a2a4a;border-radius:20px;font-size:12px;cursor:pointer;background:#12121f;color:#aaa;transition:.2s;white-space:nowrap}
+.sc-btn:hover{border-color:#4c6ef5;color:#fff}.sc-btn.active{background:#3b5bdb;color:#fff;border-color:#3b5bdb}
+.main{display:flex;gap:12px;padding:12px;max-width:1600px;margin:0 auto;height:calc(100vh - 64px)}
 .pnl{background:#12121f;border:1px solid #2a2a4a;border-radius:10px;padding:14px;display:flex;flex-direction:column}
-.left{flex:0 0 360px}.right{flex:1;min-width:0}
-.pnl h2{font-size:13px;font-weight:600;color:#7b8cde;margin-bottom:10px;text-transform:uppercase;letter-spacing:1px}
-video{width:100%;border-radius:8px;background:#000;margin-bottom:10px}
-.ctrls{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
-.btn{padding:8px 18px;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;transition:.2s}
+.left{flex:0 0 340px}.center{flex:1;min-width:0}.right-prof{flex:0 0 280px}
+.pnl h2{font-size:12px;font-weight:600;color:#7b8cde;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px}
+video{width:100%;border-radius:8px;background:#000;margin-bottom:8px}
+.ctrls{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.btn{padding:7px 16px;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;transition:.2s}
 .btn-p{background:#3b5bdb;color:#fff}.btn-p:hover{background:#4c6ef5}
 .btn-d{background:#c92a2a;color:#fff}.btn-d:hover{background:#e03131}
 .btn-s{background:#2a2a4a;color:#ccc}.btn-s:hover{background:#3a3a5a}
 .btn:disabled{opacity:.4;cursor:not-allowed}
-.sbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
-.badge{padding:3px 9px;border-radius:16px;font-size:11px;font-weight:600}
+.sbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.badge{padding:2px 8px;border-radius:12px;font-size:10px;font-weight:600}
 .b-ok{background:#0b7285;color:#e3fafc}.b-err{background:#862e2e;color:#ffc9c9}
 .b-info{background:#1a1a3a;color:#aaa}
-.chat{flex:1;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:8px}
-.msg{padding:9px 13px;border-radius:9px;max-width:88%;font-size:14px;line-height:1.5;word-break:break-word}
+.chat{flex:1;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:6px}
+.msg{padding:8px 12px;border-radius:9px;max-width:88%;font-size:13px;line-height:1.5;word-break:break-word}
 .msg-user{background:#1e3a5f;color:#a0c4ff;align-self:flex-end}
 .msg-bot{background:#1a2a1a;color:#a0ffb0;align-self:flex-start}
-.msg-sys{background:#2a2a3a;color:#888;align-self:center;font-size:11px;padding:5px 10px}
+.msg-sys{background:#2a2a3a;color:#888;align-self:center;font-size:11px;padding:4px 10px}
 .tabBtn.active{background:#3b5bdb!important;color:#fff!important}
-.meter{height:5px;background:#1a1a2e;border-radius:3px;margin:6px 0;overflow:hidden}
+.meter{height:4px;background:#1a1a2e;border-radius:3px;margin:4px 0;overflow:hidden}
 .meter-bar{height:100%;transition:width .1s;width:0%}
-.viz{display:flex;align-items:flex-end;gap:2px;height:36px;margin:6px 0}
+.viz{display:flex;align-items:flex-end;gap:2px;height:30px;margin:4px 0}
 .viz .bar{width:3px;background:#3b5bdb;border-radius:2px;transition:height 50ms}
-.si{padding:8px 14px;border-radius:7px;text-align:center;font-size:14px;font-weight:600;margin-bottom:10px;transition:.3s}
+.si{padding:7px 12px;border-radius:7px;text-align:center;font-size:13px;font-weight:600;margin-bottom:8px;transition:.3s}
 .si-listen{background:#1a2a1a;color:#51cf66;border:1px solid #2b8a3e}
 .si-think{background:#2a2a1a;color:#ffd43b;border:1px solid #5c4813}
 .si-speak{background:#1a1a3a;color:#748ffc;border:1px solid #3b5bdb}
 .si-idle{background:#1a1a1a;color:#666;border:1px solid #333}
-.timing{font-size:10px;color:#555;margin-top:2px}
-#log{font-family:'Cascadia Code','Fira Code',monospace;font-size:10px;color:#555;max-height:120px;overflow-y:auto;padding:6px;background:#0a0a14;border-radius:5px;margin-top:8px}
-@media(max-width:900px){.main{flex-direction:column}.left{flex:0 0 auto}}
+#log{font-family:'Cascadia Code','Fira Code',monospace;font-size:10px;color:#555;max-height:100px;overflow-y:auto;padding:5px;background:#0a0a14;border-radius:5px;margin-top:6px}
+.scenario-desc{font-size:11px;color:#888;padding:6px 10px;background:#0f0f1a;border-radius:6px;margin-bottom:8px;line-height:1.4}
+.prof-card{background:#0f0f1a;border-radius:8px;padding:10px;margin-bottom:8px}
+.prof-card h3{font-size:11px;color:#7b8cde;margin-bottom:6px;text-transform:uppercase}
+.prof-val{font-size:22px;font-weight:700;color:#a0c4ff}
+.prof-unit{font-size:11px;color:#666;margin-left:4px}
+.prof-sub{font-size:10px;color:#555;margin-top:2px}
+canvas.chart{width:100%;height:80px;border-radius:6px;background:#0a0a14;margin-top:4px}
+.live-sub{padding:8px 14px;background:#1e3a5f;color:#a0c4ff;border-radius:8px;font-size:13px;margin-top:6px;opacity:0.7;min-height:0;transition:opacity .2s;line-height:1.5}
+@media(max-width:1100px){.main{flex-direction:column}.left,.right-prof{flex:0 0 auto}}
 </style>
 </head>
 <body>
 
 <div class="hdr">
-  <h1>MiniCPM-o 4.5 Omni 全双工对话</h1>
-  <p>WebSocket 全双工 · PCM 流式音频 · 参考官方 MiniCPM-o-Demo</p>
+  <div>
+    <h1>omni-lab · MiniCPM-o 4.5</h1>
+    <p>全双工多模态 · WebSocket · 场景演示</p>
+  </div>
+  <div class="scenario-sel" id="scenarioSel"></div>
 </div>
 
 <div class="main">
   <div class="pnl left">
     <h2>输入</h2>
     <div class="si si-idle" id="si">待机</div>
+    <div class="scenario-desc" id="scenarioDesc">通用全双工语音对话模式</div>
     <video id="cam" autoplay muted playsinline></video>
     <div class="viz" id="viz"></div>
     <div class="meter"><div class="meter-bar" id="vol"></div></div>
@@ -428,7 +549,7 @@ video{width:100%;border-radius:8px;background:#000;margin-bottom:10px}
       <button class="btn btn-s" onclick="doReset()">重置</button>
     </div>
     <div class="ctrls">
-      <label style="font-size:12px;color:#888;display:flex;align-items:center;gap:5px">
+      <label style="font-size:11px;color:#888;display:flex;align-items:center;gap:4px">
         <input type="checkbox" id="chkCam" checked> 摄像头
       </label>
     </div>
@@ -439,24 +560,53 @@ video{width:100%;border-radius:8px;background:#000;margin-bottom:10px}
     </div>
     <div id="log"></div>
   </div>
-  <div class="pnl right">
-    <div style="display:flex;gap:8px;margin-bottom:10px">
+
+  <div class="pnl center">
+    <div style="display:flex;gap:8px;margin-bottom:8px">
       <button class="btn btn-s tabBtn active" onclick="switchTab('voice')" id="tabVoice">语音对话</button>
       <button class="btn btn-s tabBtn" onclick="switchTab('text')" id="tabText">文本对话</button>
     </div>
     <div id="voiceTab" style="flex:1;display:flex;flex-direction:column;min-height:0">
-      <h2>语音对话</h2>
+      <h2 id="voiceTitle">语音对话</h2>
       <div class="chat" id="chat"></div>
+      <div id="liveSubtitle" class="live-sub" style="display:none"></div>
     </div>
     <div id="textTab" style="flex:1;display:none;flex-direction:column;min-height:0">
       <h2>文本对话</h2>
       <div class="chat" id="textChat"></div>
       <div style="display:flex;gap:8px;margin-top:8px">
-        <input id="txtInput" type="text" placeholder="输入消息..." 
-               style="flex:1;padding:8px 12px;border-radius:7px;border:1px solid #3a3a5a;background:#1a1a2e;color:#e0e0e8;font-size:14px"
+        <input id="txtInput" type="text" placeholder="输入消息..."
+               style="flex:1;padding:8px 12px;border-radius:7px;border:1px solid #3a3a5a;background:#1a1a2e;color:#e0e0e8;font-size:13px"
                onkeydown="if(event.key==='Enter')sendText()">
         <button class="btn btn-p" onclick="sendText()">发送</button>
       </div>
+    </div>
+  </div>
+
+  <div class="pnl right-prof">
+    <h2>延迟 Profiling</h2>
+    <div class="prof-card">
+      <h3>端到端延迟</h3>
+      <div><span class="prof-val" id="profTotal">--</span><span class="prof-unit">ms</span></div>
+      <div class="prof-sub" id="profTotalSub">avg / p95 / max</div>
+    </div>
+    <div class="prof-card">
+      <h3>Prefill</h3>
+      <div><span class="prof-val" id="profPrefill">--</span><span class="prof-unit">ms</span></div>
+      <div class="prof-sub" id="profPrefillSub">--</div>
+    </div>
+    <div class="prof-card">
+      <h3>Decode</h3>
+      <div><span class="prof-val" id="profDecode">--</span><span class="prof-unit">ms</span></div>
+      <div class="prof-sub" id="profDecodeSub">--</div>
+    </div>
+    <div class="prof-card">
+      <h3>延迟趋势 (最近 50 轮)</h3>
+      <canvas class="chart" id="chartCanvas" width="260" height="80"></canvas>
+    </div>
+    <div class="prof-card">
+      <h3>统计</h3>
+      <div class="prof-sub" id="profStats">总轮次: 0</div>
     </div>
   </div>
 </div>
@@ -465,11 +615,14 @@ video{width:100%;border-radius:8px;background:#000;margin-bottom:10px}
 const CHUNK_MS=1000, PLAYBACK_SR=24000, PLAYBACK_DELAY_MS=250;
 let ws=null, mediaStream=null, audioCtx=null, analyser=null;
 let active=false, timer=null, micChunks=[];
-let playCtx=null, nextPlayTime=0, pendingBufs=0, ttsPlaying=false;
+let playCtx=null, nextPlayTime=0, pendingBufs=0;
 let inflight=0;
-let curBotEl=null;  // current bot message element (for merging text)
-let recognition=null; // speech recognition
-let curUserEl=null;  // current user speech element
+let curBotEl=null;
+let recognition=null;
+let currentScenario='default';
+let scenarios={};
+let timingData=[];
+let phase='idle';
 
 function log(m){const e=document.getElementById('log');const t=new Date().toLocaleTimeString('zh',{hour12:false});e.textContent+=`[${t}] ${m}\n`;e.scrollTop=e.scrollHeight}
 function addMsg(r,t){const c=document.getElementById('chat'),d=document.createElement('div');d.className=`msg msg-${r}`;d.textContent=t;c.appendChild(d);c.scrollTop=c.scrollHeight;return d}
@@ -483,8 +636,110 @@ function appendBot(t){
 function finishBot(){curBotEl=null}
 function setSt(s,t){const e=document.getElementById('si');e.className=`si si-${s}`;e.textContent=t}
 
+function setPhase(p){
+  if(phase===p)return;
+  phase=p;
+  if(p==='listen') setSt('listen','正在听...');
+  else if(p==='speak') setSt('speak','回复中...');
+  else setSt('idle','待机');
+}
+
+// ─── live subtitle (interim speech) ───
+function showLiveSub(text){
+  const el=document.getElementById('liveSubtitle');
+  el.textContent=text;
+  el.style.display='block';
+}
+function hideLiveSub(){
+  const el=document.getElementById('liveSubtitle');
+  el.style.display='none';
+  el.textContent='';
+}
+
+async function loadScenarios(){
+  try{
+    const r=await fetch('/api/scenarios');
+    scenarios=await r.json();
+    const sel=document.getElementById('scenarioSel');
+    sel.innerHTML='';
+    for(const[k,v]of Object.entries(scenarios)){
+      const b=document.createElement('button');
+      b.className='sc-btn'+(k===currentScenario?' active':'');
+      b.textContent=v.icon+' '+v.name;
+      b.onclick=()=>selectScenario(k);
+      b.dataset.id=k;
+      sel.appendChild(b);
+    }
+  }catch(_){}
+}
+
+function selectScenario(id){
+  if(active){log('请先停止当前对话再切换场景');return}
+  currentScenario=id;
+  document.querySelectorAll('.sc-btn').forEach(b=>{
+    b.classList.toggle('active',b.dataset.id===id);
+  });
+  const sc=scenarios[id]||{};
+  document.getElementById('scenarioDesc').textContent=sc.description||'';
+  document.getElementById('voiceTitle').textContent=(sc.icon||'')+' '+(sc.name||'语音对话');
+  log('切换场景: '+(sc.name||id));
+}
+
 async function poll(){try{const r=await fetch('/api/status'),d=await r.json();document.getElementById('bSrv').textContent=`Server: ${d.server_ok?'OK':'OFF'}`;document.getElementById('bSrv').className=`badge ${d.server_ok?'b-ok':'b-err'}`;document.getElementById('bRnd').textContent=`轮次: ${d.round_idx}`}catch(_){}}
 setInterval(poll,5000);poll();
+loadScenarios();
+
+// ─── profiling ───
+function updateProfiling(t){
+  timingData.push(t);
+  if(timingData.length>200)timingData=timingData.slice(-100);
+  const n=timingData.length;
+  const totals=timingData.map(x=>x.total), prefills=timingData.map(x=>x.prefill), decodes=timingData.map(x=>x.decode);
+  const avg=a=>Math.round(a.reduce((s,x)=>s+x,0)/a.length);
+  const p95=a=>{const s=[...a].sort((x,y)=>x-y);return s[Math.floor(s.length*0.95)]};
+  const mx=a=>Math.max(...a);
+
+  document.getElementById('profTotal').textContent=avg(totals);
+  document.getElementById('profTotalSub').textContent=`avg ${avg(totals)} / p95 ${p95(totals)} / max ${mx(totals)}`;
+  document.getElementById('profPrefill').textContent=avg(prefills);
+  document.getElementById('profPrefillSub').textContent=`avg ${avg(prefills)} / p95 ${p95(prefills)} / max ${mx(prefills)}`;
+  document.getElementById('profDecode').textContent=avg(decodes);
+  document.getElementById('profDecodeSub').textContent=`avg ${avg(decodes)} / p95 ${p95(decodes)} / max ${mx(decodes)}`;
+  document.getElementById('profStats').textContent=`总轮次: ${n} · 最近avg: ${avg(totals.slice(-10))}ms`;
+  drawChart();
+}
+
+function drawChart(){
+  const canvas=document.getElementById('chartCanvas');
+  const ctx=canvas.getContext('2d');
+  const W=canvas.width, H=canvas.height;
+  ctx.clearRect(0,0,W,H);
+  const recent=timingData.slice(-50);
+  if(recent.length<2)return;
+  const maxV=Math.max(...recent.map(x=>x.total),100);
+
+  ctx.strokeStyle='#1a1a3a'; ctx.lineWidth=0.5;
+  for(let i=0;i<4;i++){const y=H*(i/4);ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+
+  const drawLine=(data,color)=>{
+    ctx.strokeStyle=color; ctx.lineWidth=1.5; ctx.beginPath();
+    data.forEach((v,i)=>{
+      const x=i/(data.length-1)*W, y=H-v/maxV*H*0.9;
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+  };
+
+  drawLine(recent.map(x=>x.prefill),'#51cf66');
+  drawLine(recent.map(x=>x.decode),'#748ffc');
+  drawLine(recent.map(x=>x.total),'#ffd43b');
+
+  ctx.font='9px sans-serif';
+  ctx.fillStyle='#51cf66';ctx.fillText('prefill',4,10);
+  ctx.fillStyle='#748ffc';ctx.fillText('decode',50,10);
+  ctx.fillStyle='#ffd43b';ctx.fillText('total',96,10);
+  ctx.fillStyle='#444';ctx.fillText(maxV+'ms',W-35,10);
+}
 
 // ─── audio capture ───
 function collectChunk(){
@@ -517,14 +772,6 @@ function captureFrame(){
   return c.toDataURL('image/jpeg',0.6).split(',')[1];
 }
 
-// ─── recognition pause/resume to avoid TTS echo ───
-function pauseRecognition(){
-  if(recognition)try{recognition.abort()}catch(_){}
-}
-function resumeRecognition(){
-  if(recognition&&active)try{recognition.start()}catch(_){}
-}
-
 // ─── gapless PCM playback ───
 function scheduleAudio(pcmB64,sr){
   if(!playCtx)return;
@@ -532,31 +779,24 @@ function scheduleAudio(pcmB64,sr){
   const bytes=new Uint8Array(raw.length);
   for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
   const arr=new Float32Array(bytes.buffer);
-
   const buf=playCtx.createBuffer(1,arr.length,sr||PLAYBACK_SR);
   buf.getChannelData(0).set(arr);
   const src=playCtx.createBufferSource();
   src.buffer=buf; src.connect(playCtx.destination);
-
   const now=playCtx.currentTime;
   if(nextPlayTime<now) nextPlayTime=now+PLAYBACK_DELAY_MS/1000;
   src.start(nextPlayTime);
   nextPlayTime+=buf.duration;
   pendingBufs++;
-  if(!ttsPlaying){ttsPlaying=true; pauseRecognition();}
+  if(phase!=='speak') setPhase('speak');
   src.onended=()=>{
     pendingBufs--;
-    if(pendingBufs<=0){
-      ttsPlaying=false;
-      resumeRecognition();
-      setSt('listen','正在听...');
-    }
+    if(pendingBufs<=0) setPhase('listen');
   };
 }
 
 function playChunks(chunks){
   if(!chunks||!chunks.length)return;
-  setSt('speak','回复中...');
   for(const c of chunks)scheduleAudio(c.pcm,c.sr);
 }
 
@@ -567,7 +807,7 @@ function connectWs(){
   ws.onopen=()=>{
     log('WS 已连接');
     const useCam=document.getElementById('chkCam').checked;
-    ws.send(JSON.stringify({type:'prepare',media_type:useCam?2:1,duplex:true}));
+    ws.send(JSON.stringify({type:'prepare',media_type:useCam?2:1,duplex:true,scenario:currentScenario}));
   };
   ws.onclose=()=>{log('WS 断开');ws=null};
   ws.onerror=()=>log('WS 错误');
@@ -576,25 +816,23 @@ function connectWs(){
     try{d=JSON.parse(e.data)}catch(_){return}
 
     if(d.type==='prepared'){
-      addMsg('sys','模型就绪，请说话');
-      setSt('listen','正在听...');
+      const sc=scenarios[d.scenario||currentScenario]||{};
+      addMsg('sys',(sc.icon||'')+' '+(sc.name||'模型')+'就绪，请说话');
+      setPhase('listen');
       startLoop();
     } else if(d.type==='result'){
       inflight=Math.max(0,inflight-1);
-      if(d.text && d.text.length>0){
-        appendBot(d.text);
-      }
+      if(d.text&&d.text.length>0) appendBot(d.text);
       if(d.is_listen){
         finishBot();
-        if(pendingBufs<=0) setSt('listen','正在听...');
+        if(pendingBufs<=0) setPhase('listen');
       }
       if(d.timing){
-        document.getElementById('bTim').textContent=
-          `P:${d.timing.prefill}ms D:${d.timing.decode}ms`;
+        document.getElementById('bTim').textContent=`P:${d.timing.prefill}ms D:${d.timing.decode}ms`;
+        updateProfiling(d.timing);
       }
     } else if(d.type==='audio'){
       playChunks(d.chunks);
-      log(`收到 ${d.chunks.length} 段音频`);
     } else if(d.type==='error'){
       log('错误: '+d.error);
       inflight=Math.max(0,inflight-1);
@@ -609,7 +847,6 @@ function connectWs(){
 function startLoop(){
   timer=setInterval(()=>{
     if(!active||!ws||ws.readyState!==1)return;
-    // Allow max 1 in-flight request to keep latency low but prevent overlap
     if(inflight>=1)return;
     const samples=collectChunk();
     if(!samples||samples.length<100)return;
@@ -629,7 +866,7 @@ async function go(){
   }
   const useCam=document.getElementById('chkCam').checked;
   try{
-    const c={audio:{sampleRate:16000,channelCount:1,echoCancellation:true,noiseSuppression:true}};
+    const c={audio:{sampleRate:16000,channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}};
     if(useCam)c.video={width:{ideal:640},height:{ideal:480}};
     mediaStream=await navigator.mediaDevices.getUserMedia(c);
   }catch(e){addMsg('sys','无法访问设备: '+e.message);return}
@@ -646,7 +883,7 @@ async function go(){
   setupViz();
 
   playCtx=new AudioContext({sampleRate:PLAYBACK_SR});
-  nextPlayTime=0;pendingBufs=0;inflight=0;
+  nextPlayTime=0;pendingBufs=0;inflight=0;timingData=[];
 
   active=true;
   document.getElementById('btnGo').disabled=true;
@@ -654,7 +891,6 @@ async function go(){
   setSt('think','正在初始化...');
   addMsg('sys','正在连接...');
 
-  // Speech recognition for showing user's words
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(SR){
     recognition=new SR();
@@ -666,16 +902,11 @@ async function go(){
         const t=ev.results[i][0].transcript.trim();
         if(!t)continue;
         if(ev.results[i].isFinal){
-          // Finalize: replace interim element or create new one
-          if(curUserEl){curUserEl.textContent=t;curUserEl=null}
-          else addMsg('user',t);
+          hideLiveSub();
+          addMsg('user',t);
           finishBot();
         } else {
-          // Interim: show live text in a temporary bubble
-          const c=document.getElementById('chat');
-          if(!curUserEl){curUserEl=document.createElement('div');curUserEl.className='msg msg-user';curUserEl.style.opacity='0.6';c.appendChild(curUserEl)}
-          curUserEl.textContent=t;
-          c.scrollTop=c.scrollHeight;
+          showLiveSub(t);
         }
       }
     };
@@ -689,9 +920,11 @@ async function go(){
 
 function stop(){
   active=false;
+  setPhase('idle');
   if(timer){clearInterval(timer);timer=null}
   if(recognition){try{recognition.abort()}catch(_){};recognition=null}
-  curBotEl=null;curUserEl=null;
+  curBotEl=null;
+  hideLiveSub();
   try{if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'stop'}))}catch(_){}
   try{if(ws)ws.close()}catch(_){}
   ws=null;
@@ -707,6 +940,8 @@ function stop(){
 async function doReset(){
   stop();
   document.getElementById('chat').innerHTML='';
+  timingData=[];
+  drawChart();
   setSt('idle','待机');
   addMsg('sys','已重置');
 }
@@ -731,7 +966,7 @@ async function sendText(){
   addTextMsg('user',msg);
   try{
     const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({message:msg,history:textHistory})});
+      body:JSON.stringify({message:msg,history:textHistory,scenario:currentScenario})});
     const d=await r.json();
     if(d.error){addTextMsg('sys','错误: '+d.error)}
     else{addTextMsg('bot',d.text);textHistory.push({role:'user',content:msg},{role:'assistant',content:d.text})}

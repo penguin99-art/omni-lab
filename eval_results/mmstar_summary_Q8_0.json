@@ -1,0 +1,48 @@
+{
+  "model": "MiniCPM-o-4_5-Q8_0.gguf",
+  "tag": "Q8_0",
+  "benchmark": "MMStar",
+  "total": 300,
+  "correct": 209,
+  "accuracy": 69.67,
+  "official_bf16": 73.1,
+  "latency": {
+    "avg_s": 3.97,
+    "p50_s": 0.55,
+    "p95_s": 38.29,
+    "max_s": 40.95
+  },
+  "by_category": {
+    "coarse perception": {
+      "total": 56,
+      "correct": 43,
+      "accuracy": 76.79
+    },
+    "fine-grained perception": {
+      "total": 53,
+      "correct": 33,
+      "accuracy": 62.26
+    },
+    "instance reasoning": {
+      "total": 43,
+      "correct": 36,
+      "accuracy": 83.72
+    },
+    "logical reasoning": {
+      "total": 46,
+      "correct": 31,
+      "accuracy": 67.39
+    },
+    "math": {
+      "total": 50,
+      "correct": 40,
+      "accuracy": 80.0
+    },
+    "science & technology": {
+      "total": 52,
+      "correct": 26,
+      "accuracy": 50.0
+    }
+  },
+  "updated_at": "2026-03-25T16:13:37.511946"
+}

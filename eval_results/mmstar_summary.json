@@ -1,30 +1,30 @@
 {
   "model": "MiniCPM-o-4_5-Q4_K_M.gguf",
   "benchmark": "MMStar",
-  "total": 300,
-  "correct": 211,
-  "accuracy": 70.33,
+  "total": 490,
+  "correct": 349,
+  "accuracy": 71.22,
   "official_bf16": 73.1,
   "by_category": {
     "coarse perception": {
-      "total": 56,
-      "correct": 43,
-      "accuracy": 76.79
+      "total": 112,
+      "correct": 85,
+      "accuracy": 75.89
     },
     "fine-grained perception": {
-      "total": 53,
-      "correct": 34,
-      "accuracy": 64.15
+      "total": 106,
+      "correct": 69,
+      "accuracy": 65.09
     },
     "instance reasoning": {
-      "total": 43,
-      "correct": 35,
-      "accuracy": 81.4
+      "total": 86,
+      "correct": 71,
+      "accuracy": 82.56
     },
     "logical reasoning": {
-      "total": 46,
-      "correct": 32,
-      "accuracy": 69.57
+      "total": 84,
+      "correct": 57,
+      "accuracy": 67.86
     },
     "math": {
       "total": 50,
@@ -37,5 +37,5 @@
       "accuracy": 51.92
     }
   },
-  "updated_at": "2026-03-25T09:51:45.604912"
+  "updated_at": "2026-03-25T10:48:40.124101"
 }
