@@ -49,7 +49,34 @@ def image_to_base64(img):
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def query_model(base_url, image_b64, question, timeout=120):
+
+
+def _strip_think_tags(text: str) -> str:
+    if not text:
+        return ""
+    s = text.strip()
+    _close = '</think>'
+    # Qwen thinking: visible answer often follows the closing think tag.
+    if _close in s:
+        pat = r"(?is)" + re.escape(_close) + r"\s*"
+        tail = (re.split(pat, s)[-1] or "").strip()
+        if tail:
+            return tail
+    return s
+
+def _assistant_text(message: dict) -> str:
+    """Prefer `content`; fall back to reasoning fields (Ollama uses `reasoning`, some APIs use `reasoning_content`)."""
+    if not message:
+        return ""
+    content = (message.get("content") or "").strip()
+    reasoning = (message.get("reasoning_content") or message.get("reasoning") or "").strip()
+    if content:
+        return _strip_think_tags(content)
+    if reasoning:
+        return _strip_think_tags(reasoning)
+    return ""
+
+def query_model(base_url, image_b64, question, timeout=120, model=None):
     messages = [
         {
             "role": "user",
@@ -62,20 +89,25 @@ def query_model(base_url, image_b64, question, timeout=120):
             ],
         }
     ]
+    payload = {
+        "messages": messages,
+        "temperature": 0.1,
+        "max_tokens": 1024,
+    }
+    if model:
+        payload["model"] = model
+        # Ollama OpenAI shim: request no-think when supported (reasoning may still appear).
+        payload.setdefault("options", {})["think"] = False
+    else:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
     resp = requests.post(
         f"{base_url}/v1/chat/completions",
-        json={
-            "messages": messages,
-            "temperature": 0.1,
-            "max_tokens": 1024,
-            "chat_template_kwargs": {"enable_thinking": False},
-        },
+        json=payload,
         timeout=timeout,
     )
     resp.raise_for_status()
     choice = resp.json()["choices"][0]["message"]
-    content = choice.get("content", "") or ""
-    return content.strip()
+    return _assistant_text(choice)
 
 
 def extract_answer(response):
@@ -154,13 +186,12 @@ def compute_stats(results_file, tag="Q4_K_M"):
         }
 
     return {
-        "model": f"MiniCPM-o-4_5-{tag}.gguf",
+        "model": tag,
         "tag": tag,
         "benchmark": "MMStar",
         "total": total,
         "correct": correct,
         "accuracy": round(correct / total * 100, 2) if total else 0,
-        "official_bf16": 73.1,
         "latency": latency_stats,
         "by_category": {
             k: {
@@ -351,6 +382,8 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--tag", default="Q4_K_M", help="Quantization tag (e.g. Q4_K_M, Q8_0)")
+    parser.add_argument("--model", default=None,
+                        help="Model name for Ollama (e.g. qwen3.5:27b). If set, uses Ollama API format")
     args = parser.parse_args()
 
     base_url = f"http://{args.llama_host}:{args.llama_port}"
@@ -361,13 +394,16 @@ def main():
     _progress_log = RESULTS_DIR / f"progress_{args.tag}.log"
 
     log(f"=== MMStar eval for {args.tag} ===")
-    log("Checking llama-server health...")
+    log("Checking server health...")
     try:
-        r = requests.get(f"{base_url}/health", timeout=10)
+        if args.model:
+            r = requests.get(f"{base_url.replace('/v1','')}/api/tags", timeout=10)
+        else:
+            r = requests.get(f"{base_url}/health", timeout=10)
         r.raise_for_status()
-        log("llama-server is healthy")
+        log("Server is healthy")
     except Exception as e:
-        log(f"ERROR: llama-server not reachable: {e}")
+        log(f"ERROR: server not reachable: {e}")
         sys.exit(1)
 
     log("Loading MMStar dataset from HuggingFace...")
@@ -403,7 +439,7 @@ def main():
         for attempt in range(3):
             t0 = time.time()
             try:
-                raw_response = query_model(base_url, image_b64, prompt, args.timeout)
+                raw_response = query_model(base_url, image_b64, prompt, args.timeout, model=args.model)
                 elapsed = time.time() - t0
                 break
             except Exception as e:
@@ -456,9 +492,6 @@ def main():
         log("No results collected.")
         return
     log(f"DONE! [{args.tag}] Accuracy: {summary['accuracy']}% ({summary['correct']}/{summary['total']})")
-    log(f"Official MiniCPM-o 4.5 (bf16): 73.1%")
-    gap = 73.1 - summary['accuracy']
-    log(f"Quantization gap: {gap:+.1f} percentage points")
     log("")
     log("By category:")
     for cat, stats in summary.get("by_category", {}).items():
