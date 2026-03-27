@@ -7,18 +7,18 @@
 ## 特性
 
 - **全双工语音对话** — 边听边说，模型自主决定何时回应
-- **摄像头视觉理解** — 实时捕获画面，支持图像问答
-- **场景演示系统** — 4 种预设场景，一键切换（每个场景有独立UI）：
+- **摄像头视觉理解** — 实时捕获画面（每 2 秒一帧），支持图像问答
+- **场景演示系统** — 预设场景，一键切换（每个场景有独立 UI 和 System Prompt）：
   - 💬 **自由对话** — 通用全双工语音对话
-  - 📺 **AI 弹幕** — B站弹幕风格实时评论，AI观察画面后生成飘过摄像头的弹幕文字
-  - 🎨 **你画我猜** — 画画或展示物体，AI实时猜你画了什么，含计分和倒计时
-  - 🎭 **表情挑战** — AI出题你来演，做表情拿评分，毒舌点评+连击计数
+  - ✨ **AI 夸夸机** — 观察摄像头画面，持续夸赞用户的每一个细节。3 种风格（热血激昂/温柔鼓励/文艺诗意），含浮动夸赞卡片、自信能量条、金句墙
+- **上下文自动管理** — 对话超长时自动刷新上下文，注入近期对话摘要保持连贯
+- **动态 System Prompt** — 支持运行时切换场景和风格，无需重启服务
 - **延迟 Profiling 仪表盘** — 实时显示 prefill/decode/端到端延迟，含 avg/p95/max 统计和趋势图
 - **性能优化** — inotify 事件驱动 TTS 推送 + tmpfs (ramdisk) 减少磁盘 I/O
 - **WebSocket 流式通信** — 低延迟双向通信，参考 [MiniCPM-o-Demo](https://github.com/OpenBMB/MiniCPM-o-Demo) 官方架构
 - **TTS 语音合成** — 模型生成文字后通过 Token2Wav 合成语音，gapless 无缝播放
 - **浏览器语音识别** — 利用 Web Speech API 实时显示用户语音转文字
-- **量化评测** — Q4_K_M / Q8_0 量化损失对比 (MMStar 视觉 benchmark)
+- **量化评测** — Q4_K_M / Q8_0 量化损失对比 (MMStar 视觉 + GSM8K 文本)
 - **GGUF 量化推理** — Q4_K_M 量化，约 5GB 显存即可运行
 
 ## 架构
@@ -45,6 +45,7 @@ llama-server (llama.cpp-omni, port 9060)
 ├── run_omni_demo.sh          # 终端 Demo 启动脚本
 ├── download_models.sh        # 模型下载脚本
 ├── eval_vision.py            # MMStar 视觉 benchmark 评测脚本
+├── eval_text.py              # GSM8K 文本数学推理评测脚本
 ├── run_q8_eval.sh            # Q8_0 一键评测脚本
 ├── official_ref_audio.wav    # 官方 TTS 参考音频（声音克隆）
 ├── llama_omni_zh_prompt.patch # 中文提示词补丁（编译前 apply）
@@ -160,7 +161,8 @@ python3 omni_web_demo.py --port 8080 --llama-port 9060
 
 ### Web Demo (`omni_web_demo.py`)
 
-- **场景选择** — 顶部栏选择场景（自由对话/AI弹幕/你画我猜/表情挑战），需要在停止状态下切换
+- **场景选择** — 顶部栏选择场景（自由对话/AI 夸夸机），需要在停止状态下切换
+- **夸夸机风格切换** — 在 AI 夸夸机模式下，可实时切换热血激昂/温柔鼓励/文艺诗意三种风格
 - **语音对话** — 点击「开始对话」，对着麦克风说话。模型会自动回应并播放语音。
 - **文本对话** — 切换到「文本对话」标签，直接输入文字测试模型。
 - **摄像头** — 勾选「摄像头」后，模型可以看到你的画面并结合视觉回答。
@@ -210,13 +212,15 @@ python3 omni_duplex_demo.py --llama-port 9060
 ### 全双工通信协议 (WebSocket)
 
 ```
-Client → {"type":"prepare", "media_type":2, "duplex":true}
-Server → {"type":"prepared"}
+Client → {"type":"prepare", "media_type":2, "duplex":true, "scenario":"hypeman"}
+Server → {"type":"prepared", "scenario":"hypeman"}
 
 Client → {"type":"audio_chunk", "audio":"<base64 WAV>", "frame":"<base64 JPEG>"}
-Server → {"type":"result", "text":"...", "is_listen":true/false}
+Server → {"type":"result", "text":"...", "is_listen":true/false, "timing":{...}}
 Server → {"type":"audio", "chunks":[{"pcm":"<base64 float32>", "sr":24000}]}
 
+Client → {"type":"switch_style", "style":"gentle"}  # 切换夸夸机风格
+Client → {"type":"user_text", "text":"..."}          # 用户语音转文字记录
 Client → {"type":"stop"}
 Server → {"type":"stopped"}
 ```
@@ -233,6 +237,8 @@ Server → {"type":"stopped"}
 
 ## 量化评测
 
+### 视觉评测 (MMStar)
+
 使用 [MMStar](https://mmstar-benchmark.github.io/) 视觉 benchmark 评估量化损失（300 题子集, seed=42）：
 
 | 模型版本 | MMStar 准确率 | 量化损失 | 平均延迟 | 模型大小 |
@@ -241,16 +247,27 @@ Server → {"type":"stopped"}
 | Q8_0 | **69.67%** | -3.43 pp | 3.97s | ~8.7 GB |
 | Q4_K_M | **70.33%** | -2.77 pp | 2.50s | ~4.8 GB |
 
-**结论**: Q4_K_M 是最佳性价比选择 — 精度与 Q8_0 相当，延迟更低，显存仅需一半。
+### 文本评测 (GSM8K)
+
+使用 [GSM8K](https://github.com/openai/grade-school-math) 数学推理 benchmark（300 题子集, seed=42, max_tokens=1024）：
+
+| 模型版本 | GSM8K 准确率 | 平均延迟 |
+|---|---|---|
+| Q4_K_M | **70.33%** | 2.06s |
+
+**结论**: Q4_K_M 是最佳性价比选择 — 精度与 Q8_0 相当，延迟更低，显存仅需一半。科学技术类（~50%）和细粒度感知（~65%）是当前弱项。
 
 详见 [`eval_results/REPORT.md`](eval_results/REPORT.md)。
 
 运行评测：
 
 ```bash
-# 运行 Q4_K_M 或 Q8_0 评测
+# 视觉评测
 python3 eval_vision.py --samples 300 --tag Q4_K_M
 python3 eval_vision.py --samples 300 --tag Q8_0
+
+# 文本数学推理评测
+python3 eval_text.py --samples 300 --tag Q4_K_M
 ```
 
 ## 致谢

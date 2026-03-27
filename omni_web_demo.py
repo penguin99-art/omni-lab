@@ -317,6 +317,7 @@ def duplex_ws(ws):
                     scenario_id = msg.get("scenario", "default")
                     with state_lock:
                         state["scenario"] = scenario_id
+                        state["active_style"] = ""
                         state["timing_history"] = []
 
                     import shutil
@@ -332,7 +333,10 @@ def duplex_ws(ws):
                     sc = SCENARIOS.get(scenario_id, SCENARIOS["default"])
                     prompt_text = sc["system_prompt"]
                     if "sub_styles" in sc:
-                        prompt_text = sc["sub_styles"].get("hype", list(sc["sub_styles"].values())[0])["prompt"]
+                        default_style = "hype" if "hype" in sc["sub_styles"] else list(sc["sub_styles"].keys())[0]
+                        prompt_text = sc["sub_styles"][default_style]["prompt"]
+                        with state_lock:
+                            state["active_style"] = default_style
                     ref_audio = str(BASE_DIR / "official_ref_audio.wav")
                     try:
                         requests.post(llama_url("/v1/stream/update_session_config"), json={
@@ -381,7 +385,12 @@ def duplex_ws(ws):
                         if recent:
                             with state_lock:
                                 scenario_id = state.get("scenario", "default")
-                            base_prompt = SCENARIOS.get(scenario_id, SCENARIOS["default"])["system_prompt"]
+                                active_style = state.get("active_style", "")
+                            sc = SCENARIOS.get(scenario_id, SCENARIOS["default"])
+                            if active_style and "sub_styles" in sc and active_style in sc["sub_styles"]:
+                                base_prompt = sc["sub_styles"][active_style]["prompt"]
+                            else:
+                                base_prompt = sc["system_prompt"]
                             history_lines = "\n".join(
                                 f"{'用户' if t['role']=='user' else '助手'}：{t['text'][:80]}"
                                 for t in recent
@@ -488,6 +497,8 @@ def duplex_ws(ws):
                     scenario_id = state.get("scenario", "default")
                 sc = SCENARIOS.get(scenario_id)
                 if sc and "sub_styles" in sc and style_id in sc["sub_styles"]:
+                    with state_lock:
+                        state["active_style"] = style_id
                     new_prompt = sc["sub_styles"][style_id]["prompt"]
                     ref_audio = str(BASE_DIR / "official_ref_audio.wav")
                     try:
@@ -923,12 +934,10 @@ function drawChart(){
 // ─── AI Hype Man (夸夸机) ───
 // ═══════════════════════════════════════════════════════════
 let hypeEnergy=0;
-let hypeAccum='';
 let hypeStyle='hype';
 
 function hypeReset(){
   hypeEnergy=0;
-  hypeAccum='';
   updateEnergyBar();
   document.getElementById('quoteWall').innerHTML='';
   document.getElementById('hypeFloatLayer').innerHTML='';
