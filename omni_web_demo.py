@@ -59,44 +59,45 @@ SCENARIOS = {
         "system_prompt": "你是一个友好的中文助手，请用普通话回答。",
         "description": "通用全双工语音对话模式",
     },
-    "danmaku": {
-        "name": "AI 弹幕",
-        "icon": "📺",
+    "hypeman": {
+        "name": "AI 夸夸机",
+        "icon": "✨",
         "system_prompt": (
-            "你是一个实时弹幕评论员，风格类似B站弹幕。"
-            "你通过摄像头观察画面，不断生成简短、有趣、犀利的弹幕评论。"
-            "每条弹幕不超过15个字，要幽默、要有梗、要接地气。"
-            "可以吐槽、可以夸、可以发问、可以玩谐音梗。"
-            "像网友在直播间发弹幕一样自然随意。用普通话。"
+            "你是夸夸大师，通过摄像头持续观察用户。"
+            "你必须不停地夸！每隔几秒就主动说一句夸赞，不要等用户说话。"
+            "规则：每次只说一句话，不超过15个字！夸到具体细节，加惊叹词。"
+            "不要重复，每次要从不同角度夸。用普通话。"
         ),
-        "description": "B站弹幕风格实时评论 — 摄像头画面上飘过AI弹幕",
-    },
-    "pictionary": {
-        "name": "你画我猜",
-        "icon": "🎨",
-        "system_prompt": (
-            "你在玩你画我猜游戏。用户会在纸上画画或展示物体给你看。"
-            "你的任务是尽快猜出他画的/展示的是什么。"
-            "只回答你的猜测，用简短的词语，比如'猫''汽车''太阳'。"
-            "如果不确定就继续猜，每次给出一个新的猜测。"
-            "猜对时说'我猜是XXX！'。用普通话。"
-        ),
-        "description": "画画或展示物体，AI实时猜你画了什么",
-    },
-    "expression": {
-        "name": "表情挑战",
-        "icon": "🎭",
-        "system_prompt": (
-            "你是表情挑战的裁判。游戏规则："
-            "1. 你先给用户一个表情指令，如'请做出惊讶的表情'、'请做出生气的样子'等。"
-            "2. 用户对着摄像头做表情。"
-            "3. 你观察用户的表情，给出1-10分的评分和简短点评。"
-            "4. 然后给出下一个表情挑战。"
-            "表情种类：开心、惊讶、生气、悲伤、害怕、厌恶、困惑、骄傲、害羞、兴奋、"
-            "鬼脸、wink、无辜、高冷、卖萌。"
-            "评分要有趣，点评要毒舌但友好。用普通话。"
-        ),
-        "description": "AI出题你来演 — 做表情、拿评分、PK表情包",
+        "description": "全世界最懂欣赏你的 AI — 喝口水都能被夸出花",
+        "sub_styles": {
+            "gentle": {
+                "name": "温柔鼓励",
+                "prompt": (
+                    "你是温暖治愈的夸夸大师，通过摄像头持续观察用户。"
+                    "你必须不停地夸！每隔几秒就主动说一句，不要等用户说话。"
+                    "规则：每次只说一句话，不超过15个字！"
+                    "用温柔语气夸赞你看到的具体细节。不要重复。用普通话。"
+                ),
+            },
+            "hype": {
+                "name": "热血激昂",
+                "prompt": (
+                    "你是超级热情的夸夸大师，通过摄像头持续观察用户。"
+                    "你必须不停地夸！每隔几秒就主动说一句，不要等用户说话。"
+                    "规则：每次只说一句话，不超过15个字！"
+                    "把看到的细节和伟大事物做类比，加惊叹词如'天呐！''绝了！'。不要重复。用普通话。"
+                ),
+            },
+            "poetic": {
+                "name": "文艺诗意",
+                "prompt": (
+                    "你是文艺夸夸诗人，通过摄像头持续观察用户。"
+                    "你必须不停地夸！每隔几秒就主动说一句，不要等用户说话。"
+                    "规则：每次只说一句话，不超过15个字！"
+                    "用诗意比喻赞美你看到的画面。不要重复。用普通话。"
+                ),
+            },
+        },
     },
 }
 
@@ -257,7 +258,7 @@ def duplex_ws(ws):
     tts_stop = threading.Event()
     empty_listen_count = [0]
     chunk_since_reset = [0]
-    MAX_CHUNKS_BEFORE_RESET = 500
+    MAX_CHUNKS_BEFORE_RESET = 300
 
     send_lock = threading.Lock()
     ws_closed = [False]
@@ -327,6 +328,20 @@ def duplex_ws(ws):
 
                     _do_init(media_type, duplex)
                     wav_cursor[0] = 0
+
+                    sc = SCENARIOS.get(scenario_id, SCENARIOS["default"])
+                    prompt_text = sc["system_prompt"]
+                    if "sub_styles" in sc:
+                        prompt_text = sc["sub_styles"].get("hype", list(sc["sub_styles"].values())[0])["prompt"]
+                    ref_audio = str(BASE_DIR / "official_ref_audio.wav")
+                    try:
+                        requests.post(llama_url("/v1/stream/update_session_config"), json={
+                            "system_prompt": f"流式全双工对话。{prompt_text}",
+                            "voice_audio": ref_audio,
+                        }, timeout=30)
+                        print(f"[prepare] injected system prompt for scenario={scenario_id}", flush=True)
+                    except Exception as e:
+                        print(f"[prepare] prompt injection failed (non-fatal): {e}", flush=True)
 
                     if tts_thread is None or not tts_thread.is_alive():
                         tts_stop.clear()
@@ -466,6 +481,23 @@ def duplex_ws(ws):
                     conversation_history.append({"role": "user", "text": user_t})
                     if len(conversation_history) > MAX_HISTORY_TURNS * 2:
                         conversation_history[:] = conversation_history[-MAX_HISTORY_TURNS * 2:]
+
+            elif msg_type == "switch_style":
+                style_id = msg.get("style", "")
+                with state_lock:
+                    scenario_id = state.get("scenario", "default")
+                sc = SCENARIOS.get(scenario_id)
+                if sc and "sub_styles" in sc and style_id in sc["sub_styles"]:
+                    new_prompt = sc["sub_styles"][style_id]["prompt"]
+                    ref_audio = str(BASE_DIR / "official_ref_audio.wav")
+                    try:
+                        requests.post(llama_url("/v1/stream/update_session_config"), json={
+                            "system_prompt": f"流式全双工对话。{new_prompt}",
+                            "voice_audio": ref_audio,
+                        }, timeout=30)
+                        print(f"[STYLE] switched to {style_id}", flush=True)
+                    except Exception as e:
+                        print(f"[STYLE] switch failed: {e}", flush=True)
 
             elif msg_type == "stop":
                 try:
@@ -611,41 +643,26 @@ canvas.chart{width:100%;height:80px;border-radius:6px;background:#0a0a14;margin-
 .live-sub{padding:8px 14px;background:#1e3a5f;color:#a0c4ff;border-radius:8px;font-size:13px;margin-top:6px;opacity:0.7;min-height:0;transition:opacity .2s;line-height:1.5}
 .cam-wrap{position:relative;overflow:hidden;border-radius:8px;margin-bottom:8px}
 .cam-wrap video{margin-bottom:0;border-radius:0}
-.danmaku-layer{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;overflow:hidden;z-index:10;display:none}
-.danmaku{position:absolute;white-space:nowrap;font-weight:700;font-size:20px;text-shadow:2px 2px 4px rgba(0,0,0,.9),0 0 8px rgba(0,0,0,.5);pointer-events:none;will-change:transform}
-@keyframes dm-scroll{from{transform:translateX(0)}to{transform:translateX(calc(-100% - 100vw))}}
-.game-panel{display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:12px;padding:20px}
-.game-top{display:flex;gap:32px;align-items:center;margin-bottom:8px}
-.game-timer{font-size:56px;font-weight:900;color:#ffd43b;font-variant-numeric:tabular-nums;min-width:80px;text-align:center}
-.game-timer.warn{color:#e03131;animation:pulse .5s infinite alternate}
-@keyframes pulse{to{opacity:.5}}
-.game-score-box{text-align:center}
-.game-score-box .label{font-size:11px;color:#666;text-transform:uppercase}
-.game-score-box .val{font-size:32px;font-weight:800;color:#51cf66}
-.game-round-box{text-align:center}
-.game-round-box .label{font-size:11px;color:#666;text-transform:uppercase}
-.game-round-box .val{font-size:24px;font-weight:700;color:#a0c4ff}
-.game-guess{font-size:48px;font-weight:900;color:#e0e0e8;text-align:center;padding:32px 24px;background:linear-gradient(135deg,#1a1a3a,#12122a);border-radius:16px;min-height:120px;display:flex;align-items:center;justify-content:center;width:100%;max-width:500px;border:2px solid #2a2a4a;transition:border-color .3s}
-.game-guess.hot{border-color:#ffd43b;box-shadow:0 0 20px rgba(255,212,59,.2)}
-.game-btns{display:flex;gap:12px;margin-top:8px}
-.game-btns .btn{padding:10px 28px;font-size:14px;border-radius:10px}
-.game-history{width:100%;max-width:500px;max-height:140px;overflow-y:auto;font-size:12px;color:#555;margin-top:12px}
-.game-history div{padding:6px 10px;border-bottom:1px solid #1a1a2e;display:flex;justify-content:space-between}
-.expr-panel{display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:16px;padding:20px}
-.expr-card{background:linear-gradient(135deg,#1a1a3a,#12122a);border-radius:20px;padding:32px 40px;text-align:center;min-width:300px;border:2px solid #2a2a4a}
-.expr-emoji{font-size:72px;display:block;margin-bottom:12px}
-.expr-target{font-size:28px;font-weight:800;color:#ffd43b}
-.expr-hint{font-size:13px;color:#666;margin-top:8px}
-.expr-result{text-align:center;min-height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}
-.expr-score-big{font-size:80px;font-weight:900;background:linear-gradient(135deg,#51cf66,#22b8cf);-webkit-background-clip:text;-webkit-text-fill-color:transparent;line-height:1}
-.expr-comment{font-size:15px;color:#ccc;max-width:320px;line-height:1.5}
-.expr-stats{display:flex;gap:32px;margin-top:8px}
-.expr-stats .stat{text-align:center}
-.expr-stats .stat .label{font-size:10px;color:#666;text-transform:uppercase;letter-spacing:1px}
-.expr-stats .stat .val{font-size:28px;font-weight:800;color:#a0c4ff}
-.expr-stats .stat .val.combo{color:#ffd43b}
-.expr-progress{width:100%;max-width:300px;height:6px;background:#1a1a2e;border-radius:3px;overflow:hidden}
-.expr-progress-bar{height:100%;background:linear-gradient(90deg,#3b5bdb,#51cf66);transition:width .3s;border-radius:3px}
+.hype-panel{display:none;flex-direction:column;flex:1;min-height:0;padding:12px;gap:12px}
+.hype-float-layer{position:relative;min-height:100px;flex:0 0 auto;overflow:hidden}
+.praise-card{position:absolute;left:50%;transform:translateX(-50%);text-align:center;padding:14px 24px;background:linear-gradient(135deg,rgba(255,100,150,.15),rgba(255,200,60,.12));border:1px solid rgba(255,180,100,.3);border-radius:16px;font-size:18px;font-weight:700;color:#ffe066;line-height:1.5;max-width:90%;pointer-events:none;animation:praiseIn .5s ease-out forwards}
+@keyframes praiseIn{0%{opacity:0;transform:translateX(-50%) scale(.7) translateY(20px)}30%{opacity:1;transform:translateX(-50%) scale(1.05)}100%{opacity:1;transform:translateX(-50%) scale(1)}}
+.praise-card.out{animation:praiseOut .6s ease-in forwards}
+@keyframes praiseOut{to{opacity:0;transform:translateX(-50%) translateY(-40px) scale(.9)}}
+.hype-energy{width:100%;flex:0 0 auto}
+.hype-energy-label{display:flex;justify-content:space-between;font-size:11px;color:#999;margin-bottom:4px}
+.hype-energy-track{width:100%;height:12px;background:#1a1a2e;border-radius:6px;overflow:hidden;border:1px solid #2a2a4a}
+.hype-energy-bar{height:100%;width:0%;border-radius:6px;transition:width .5s ease;background:linear-gradient(90deg,#ff6b9d,#ffd43b,#51cf66)}
+.hype-energy-track.maxed{box-shadow:0 0 16px rgba(255,212,59,.5);border-color:#ffd43b}
+@keyframes confetti{0%{opacity:1;transform:translateY(0) rotate(0)}100%{opacity:0;transform:translateY(-60px) rotate(180deg)}}
+.confetti-particle{position:absolute;width:8px;height:8px;border-radius:50%;pointer-events:none;animation:confetti 1s ease-out forwards}
+.hype-styles{display:flex;gap:6px;flex:0 0 auto}
+.hype-styles .style-btn{padding:6px 14px;border-radius:8px;border:1px solid #3a3a5a;background:#12122a;color:#a0c4ff;font-size:12px;cursor:pointer;transition:all .2s}
+.hype-styles .style-btn.active{background:#3b5bdb;color:#fff;border-color:#3b5bdb}
+.quote-wall{flex:1;overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:6px;padding:4px 0}
+.quote-wall-title{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;flex:0 0 auto}
+.quote-item{padding:10px 14px;background:linear-gradient(135deg,#1a1a3a,#12122a);border-radius:10px;font-size:13px;color:#e0e0e8;line-height:1.5;border-left:3px solid #ffd43b;animation:quoteIn .3s ease-out}
+@keyframes quoteIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:translateX(0)}}
 @media(max-width:1100px){.main{flex-direction:column}.left,.right-prof{flex:0 0 auto}}
 </style>
 </head>
@@ -666,7 +683,6 @@ canvas.chart{width:100%;height:80px;border-radius:6px;background:#0a0a14;margin-
     <div class="scenario-desc" id="scenarioDesc">通用全双工语音对话模式</div>
     <div class="cam-wrap">
       <video id="cam" autoplay muted playsinline></video>
-      <div class="danmaku-layer" id="danmakuLayer"></div>
     </div>
     <div class="viz" id="viz"></div>
     <div class="meter"><div class="meter-bar" id="vol"></div></div>
@@ -709,41 +725,20 @@ canvas.chart{width:100%;height:80px;border-radius:6px;background:#0a0a14;margin-
       </div>
     </div>
 
-    <!-- Pictionary Game UI -->
-    <div id="gameTab" class="game-panel">
-      <div class="game-top">
-        <div class="game-round-box"><div class="label">Round</div><div class="val" id="gameRound">1</div></div>
-        <div class="game-timer" id="gameTimer">30</div>
-        <div class="game-score-box"><div class="label">Score</div><div class="val" id="gameScore">0</div></div>
+    <!-- AI Hype Man UI -->
+    <div id="hypeTab" class="hype-panel">
+      <div class="hype-styles" id="hypeStyles">
+        <button class="style-btn active" data-style="hype" onclick="switchHypeStyle('hype')">🔥 热血激昂</button>
+        <button class="style-btn" data-style="gentle" onclick="switchHypeStyle('gentle')">💕 温柔鼓励</button>
+        <button class="style-btn" data-style="poetic" onclick="switchHypeStyle('poetic')">🌙 文艺诗意</button>
       </div>
-      <div style="font-size:13px;color:#888;margin-bottom:4px">AI 正在猜...</div>
-      <div class="game-guess" id="gameGuess">🎨 展示给我看</div>
-      <div class="game-btns">
-        <button class="btn btn-p" onclick="gameCorrect()" id="btnCorrect">✅ 猜对了!</button>
-        <button class="btn btn-s" onclick="gameSkip()">⏭ 跳过</button>
-        <button class="btn btn-s" onclick="gameRestart()">🔄 重新开始</button>
+      <div class="hype-energy">
+        <div class="hype-energy-label"><span>✨ 自信能量</span><span id="hypeEnergyPct">0%</span></div>
+        <div class="hype-energy-track" id="hypeEnergyTrack"><div class="hype-energy-bar" id="hypeEnergyBar"></div></div>
       </div>
-      <div class="game-history" id="gameHistory"></div>
-    </div>
-
-    <!-- Expression Challenge UI -->
-    <div id="exprTab" class="expr-panel">
-      <div class="expr-card" id="exprCard">
-        <span class="expr-emoji" id="exprEmoji">🎭</span>
-        <div class="expr-target" id="exprTarget">等待开始...</div>
-        <div class="expr-hint" id="exprHint">AI 会给你表情挑战</div>
-      </div>
-      <div class="expr-result" id="exprResult">
-        <div class="expr-score-big" id="exprScoreBig" style="display:none">--</div>
-        <div class="expr-comment" id="exprComment"></div>
-      </div>
-      <div class="expr-stats">
-        <div class="stat"><div class="label">总分</div><div class="val" id="exprTotalScore">0</div></div>
-        <div class="stat"><div class="label">连击</div><div class="val combo" id="exprCombo">0</div></div>
-        <div class="stat"><div class="label">轮次</div><div class="val" id="exprRounds">0</div></div>
-      </div>
-      <div class="expr-progress"><div class="expr-progress-bar" id="exprProgress" style="width:0%"></div></div>
-      <button class="btn btn-p" onclick="exprNext()" id="btnExprNext" style="margin-top:8px">⏭ 下一个挑战</button>
+      <div class="hype-float-layer" id="hypeFloatLayer"></div>
+      <div class="quote-wall-title">💬 金句墙</div>
+      <div class="quote-wall" id="quoteWall"></div>
     </div>
   </div>
 
@@ -777,7 +772,7 @@ canvas.chart{width:100%;height:80px;border-radius:6px;background:#0a0a14;margin-
 
 <script>
 const CHUNK_MS=1000, PLAYBACK_SR=24000, PLAYBACK_DELAY_MS=250;
-const FRAME_EVERY_N=5;
+const FRAME_EVERY_N=2;
 let ws=null, mediaStream=null, audioCtx=null, analyser=null;
 let active=false, timer=null, micChunks=[];
 let playCtx=null, nextPlayTime=0, pendingBufs=0;
@@ -851,29 +846,18 @@ function selectScenario(id){
 
   const voiceTab=document.getElementById('voiceTab');
   const textTab=document.getElementById('textTab');
-  const gameTab=document.getElementById('gameTab');
-  const exprTab=document.getElementById('exprTab');
-  const danmakuLayer=document.getElementById('danmakuLayer');
+  const hypeTab=document.getElementById('hypeTab');
   const tabBar=document.getElementById('tabBar');
 
   voiceTab.style.display='none';
   textTab.style.display='none';
-  gameTab.style.display='none';
-  exprTab.style.display='none';
-  danmakuLayer.style.display='none';
+  hypeTab.style.display='none';
   tabBar.style.display='flex';
 
-  if(id==='danmaku'){
-    voiceTab.style.display='flex';
-    danmakuLayer.style.display='block';
-  } else if(id==='pictionary'){
-    gameTab.style.display='flex';
+  if(id==='hypeman'){
+    hypeTab.style.display='flex';
     tabBar.style.display='none';
-    gameReset();
-  } else if(id==='expression'){
-    exprTab.style.display='flex';
-    tabBar.style.display='none';
-    exprReset();
+    hypeReset();
   } else {
     voiceTab.style.display='flex';
   }
@@ -936,225 +920,100 @@ function drawChart(){
 }
 
 // ═══════════════════════════════════════════════════════════
-// ─── Danmaku (弹幕) ───
+// ─── AI Hype Man (夸夸机) ───
 // ═══════════════════════════════════════════════════════════
-const DM_COLORS=['#fff','#ffd43b','#51cf66','#ff6b6b','#748ffc','#22b8cf','#f783ac','#ff922b','#da77f2'];
-let dmTrackUsed=new Array(12).fill(0);
+let hypeEnergy=0;
+let hypeAccum='';
+let hypeStyle='hype';
 
-function addDanmaku(text){
+function hypeReset(){
+  hypeEnergy=0;
+  hypeAccum='';
+  updateEnergyBar();
+  document.getElementById('quoteWall').innerHTML='';
+  document.getElementById('hypeFloatLayer').innerHTML='';
+}
+
+function updateEnergyBar(){
+  const bar=document.getElementById('hypeEnergyBar');
+  const track=document.getElementById('hypeEnergyTrack');
+  const pct=document.getElementById('hypeEnergyPct');
+  const v=Math.min(100,Math.max(0,Math.round(hypeEnergy)));
+  bar.style.width=v+'%';
+  pct.textContent=v+'%';
+  if(v>=100){
+    track.classList.add('maxed');
+    spawnConfetti();
+    setTimeout(()=>{hypeEnergy=80;updateEnergyBar()},2000);
+  } else {
+    track.classList.remove('maxed');
+  }
+}
+
+function spawnConfetti(){
+  const layer=document.getElementById('hypeFloatLayer');
+  const colors=['#ff6b6b','#ffd43b','#51cf66','#748ffc','#f783ac','#ff922b','#da77f2','#22b8cf'];
+  for(let i=0;i<20;i++){
+    const p=document.createElement('div');
+    p.className='confetti-particle';
+    p.style.background=colors[Math.floor(Math.random()*colors.length)];
+    p.style.left=Math.random()*100+'%';
+    p.style.top=(40+Math.random()*40)+'%';
+    p.style.animationDelay=(Math.random()*0.5)+'s';
+    layer.appendChild(p);
+    setTimeout(()=>p.remove(),1500);
+  }
+}
+
+function addPraise(text){
   if(!text||!text.trim())return;
-  const layer=document.getElementById('danmakuLayer');
-  if(layer.style.display==='none')return;
-  const el=document.createElement('div');
-  el.className='danmaku';
-  el.textContent=text.trim();
-  el.style.color=DM_COLORS[Math.floor(Math.random()*DM_COLORS.length)];
-  const fontSize=16+Math.floor(Math.random()*10);
-  el.style.fontSize=fontSize+'px';
+  const layer=document.getElementById('hypeFloatLayer');
+  const old=layer.querySelectorAll('.praise-card:not(.out)');
+  old.forEach(el=>{el.classList.add('out');setTimeout(()=>el.remove(),600)});
 
-  const now=Date.now();
-  let track=0, minTime=Infinity;
-  for(let i=0;i<dmTrackUsed.length;i++){
-    if(dmTrackUsed[i]<now){track=i;break}
-    if(dmTrackUsed[i]<minTime){minTime=dmTrackUsed[i];track=i}
+  const card=document.createElement('div');
+  card.className='praise-card';
+  card.textContent=text.trim();
+  card.style.bottom='10%';
+  layer.appendChild(card);
+  setTimeout(()=>{card.classList.add('out');setTimeout(()=>card.remove(),600)},3500);
+
+  const wall=document.getElementById('quoteWall');
+  const q=document.createElement('div');
+  q.className='quote-item';
+  q.textContent=text.trim();
+  wall.insertBefore(q,wall.firstChild);
+  if(wall.children.length>30)wall.lastChild.remove();
+
+  const bangs=(text.match(/[！!]/g)||[]).length;
+  const intensity=text.match(/天呐|不敢相信|绝了|太|简直|堪比|女王|大师|天才|完美|震撼|优雅/g);
+  const delta=5+bangs*3+(intensity?intensity.length*4:0);
+  hypeEnergy=Math.min(100,hypeEnergy+delta);
+  updateEnergyBar();
+}
+
+function switchHypeStyle(style){
+  hypeStyle=style;
+  document.querySelectorAll('#hypeStyles .style-btn').forEach(b=>{
+    b.classList.toggle('active',b.dataset.style===style);
+  });
+  if(ws&&ws.readyState===1){
+    ws.send(JSON.stringify({type:'switch_style',style:style}));
   }
-  const topPct=4+track*(88/dmTrackUsed.length);
-  el.style.top=topPct+'%';
-  dmTrackUsed[track]=now+4000;
-
-  const layerW=layer.offsetWidth||600;
-  el.style.right='-50%';
-  el.style.animation=`dm-scroll ${5+Math.random()*2}s linear forwards`;
-
-  layer.appendChild(el);
-  el.addEventListener('animationend',()=>el.remove());
-  setTimeout(()=>{if(el.parentNode)el.remove()},10000);
-}
-
-// ═══════════════════════════════════════════════════════════
-// ─── Pictionary (你画我猜) ───
-// ═══════════════════════════════════════════════════════════
-let gameState={round:1,score:0,timer:30,interval:null,history:[],currentGuess:'',guessAccum:''};
-
-function gameReset(){
-  gameState={round:1,score:0,timer:30,interval:null,history:[],currentGuess:'',guessAccum:''};
-  document.getElementById('gameRound').textContent='1';
-  document.getElementById('gameScore').textContent='0';
-  document.getElementById('gameTimer').textContent='30';
-  document.getElementById('gameTimer').classList.remove('warn');
-  document.getElementById('gameGuess').textContent='🎨 展示给我看';
-  document.getElementById('gameGuess').classList.remove('hot');
-  document.getElementById('gameHistory').innerHTML='';
-}
-
-function gameStartTimer(){
-  if(gameState.interval)clearInterval(gameState.interval);
-  gameState.timer=30;
-  document.getElementById('gameTimer').textContent='30';
-  document.getElementById('gameTimer').classList.remove('warn');
-  gameState.interval=setInterval(()=>{
-    gameState.timer--;
-    const el=document.getElementById('gameTimer');
-    el.textContent=gameState.timer;
-    if(gameState.timer<=10)el.classList.add('warn');
-    if(gameState.timer<=0){
-      clearInterval(gameState.interval);
-      gameState.interval=null;
-      gameAddHistory('⏰ 时间到','--');
-      gameNextRound();
-    }
-  },1000);
-}
-
-function gameUpdateGuess(text){
-  if(!text)return;
-  gameState.guessAccum+=text;
-  gameState.currentGuess=gameState.guessAccum.trim();
-  const el=document.getElementById('gameGuess');
-  el.textContent=gameState.currentGuess||'🤔 思考中...';
-  el.classList.add('hot');
-  setTimeout(()=>el.classList.remove('hot'),500);
-  if(!gameState.interval)gameStartTimer();
-}
-
-function gameFinishGuess(){
-  gameState.guessAccum='';
-}
-
-function gameCorrect(){
-  gameState.score++;
-  document.getElementById('gameScore').textContent=gameState.score;
-  const timeUsed=30-gameState.timer;
-  gameAddHistory('✅ '+gameState.currentGuess, timeUsed+'s');
-  if(gameState.interval){clearInterval(gameState.interval);gameState.interval=null}
-  gameNextRound();
-}
-
-function gameSkip(){
-  gameAddHistory('⏭ 跳过','--');
-  if(gameState.interval){clearInterval(gameState.interval);gameState.interval=null}
-  gameNextRound();
-}
-
-function gameNextRound(){
-  gameState.round++;
-  gameState.currentGuess='';
-  gameState.guessAccum='';
-  document.getElementById('gameRound').textContent=gameState.round;
-  document.getElementById('gameGuess').textContent='🎨 展示下一个';
-  document.getElementById('gameGuess').classList.remove('hot');
-  document.getElementById('gameTimer').textContent='30';
-  document.getElementById('gameTimer').classList.remove('warn');
-}
-
-function gameRestart(){
-  if(gameState.interval){clearInterval(gameState.interval);gameState.interval=null}
-  gameReset();
-}
-
-function gameAddHistory(what,time){
-  const el=document.getElementById('gameHistory');
-  const d=document.createElement('div');
-  d.innerHTML=`<span>R${gameState.round}: ${what}</span><span>${time}</span>`;
-  el.insertBefore(d,el.firstChild);
-}
-
-// ═══════════════════════════════════════════════════════════
-// ─── Expression Challenge (表情挑战) ───
-// ═══════════════════════════════════════════════════════════
-const EXPR_EMOJIS={'开心':'😄','惊讶':'😲','生气':'😠','悲伤':'😢','害怕':'😨','厌恶':'🤢',
-  '困惑':'🤔','骄傲':'😏','害羞':'😳','兴奋':'🤩','鬼脸':'🤪','wink':'😜','无辜':'🥺','高冷':'😎','卖萌':'🥰'};
-let exprState={totalScore:0,combo:0,rounds:0,maxRounds:10,currentTarget:'',lastScore:0,textAccum:''};
-
-function exprReset(){
-  exprState={totalScore:0,combo:0,rounds:0,maxRounds:10,currentTarget:'',lastScore:0,textAccum:''};
-  document.getElementById('exprTotalScore').textContent='0';
-  document.getElementById('exprCombo').textContent='0';
-  document.getElementById('exprRounds').textContent='0';
-  document.getElementById('exprProgress').style.width='0%';
-  document.getElementById('exprEmoji').textContent='🎭';
-  document.getElementById('exprTarget').textContent='等待AI出题...';
-  document.getElementById('exprHint').textContent='开始对话后AI会给你表情挑战';
-  document.getElementById('exprScoreBig').style.display='none';
-  document.getElementById('exprComment').textContent='';
-}
-
-function exprUpdateJudgment(text){
-  if(!text)return;
-  exprState.textAccum+=text;
-  const full=exprState.textAccum;
-
-  const scoreMatch=full.match(/(\d+)\s*[\/／分]/);
-  if(scoreMatch){
-    const s=parseInt(scoreMatch[1]);
-    if(s>=1&&s<=10){
-      exprState.lastScore=s;
-      document.getElementById('exprScoreBig').textContent=s;
-      document.getElementById('exprScoreBig').style.display='block';
-      const hue=s>=7?120:s>=4?60:0;
-      document.getElementById('exprScoreBig').style.background=`linear-gradient(135deg,hsl(${hue},70%,60%),hsl(${hue+30},70%,50%))`;
-      document.getElementById('exprScoreBig').style['-webkit-background-clip']='text';
-    }
-  }
-
-  for(const[name,emoji]of Object.entries(EXPR_EMOJIS)){
-    if(full.includes(name)){
-      exprState.currentTarget=name;
-      document.getElementById('exprEmoji').textContent=emoji;
-      document.getElementById('exprTarget').textContent='请做: '+name;
-      document.getElementById('exprHint').textContent='对着摄像头做出这个表情!';
-      break;
-    }
-  }
-
-  document.getElementById('exprComment').textContent=full.slice(-80);
-}
-
-function exprFinishJudgment(){
-  const full=exprState.textAccum;
-  if(exprState.lastScore>0){
-    exprState.totalScore+=exprState.lastScore;
-    exprState.rounds++;
-    if(exprState.lastScore>=7) exprState.combo++;
-    else exprState.combo=0;
-    document.getElementById('exprTotalScore').textContent=exprState.totalScore;
-    document.getElementById('exprCombo').textContent=exprState.combo;
-    document.getElementById('exprRounds').textContent=exprState.rounds;
-    document.getElementById('exprProgress').style.width=(exprState.rounds/exprState.maxRounds*100)+'%';
-    exprState.lastScore=0;
-  }
-  document.getElementById('exprComment').textContent=full.slice(-120);
-  exprState.textAccum='';
-}
-
-function exprNext(){
-  exprState.textAccum='';
-  exprState.lastScore=0;
-  document.getElementById('exprScoreBig').style.display='none';
-  document.getElementById('exprComment').textContent='等待AI出下一题...';
-  document.getElementById('exprEmoji').textContent='🎭';
-  document.getElementById('exprTarget').textContent='准备好了吗?';
-  document.getElementById('exprHint').textContent='AI正在想下一个挑战...';
+  log('切换夸夸风格: '+style);
 }
 
 // ═══════════════════════════════════════════════════════════
 // ─── Scenario-aware message routing ───
 // ═══════════════════════════════════════════════════════════
 function routeBotText(text, isFinish){
-  if(currentScenario==='danmaku'){
+  if(currentScenario==='hypeman'){
     if(isFinish&&curBotEl){
-      const full=curBotEl.textContent||'';
-      full.split(/[，。！？、；\n]+/).filter(s=>s.trim()).forEach(s=>addDanmaku(s));
+      addPraise(curBotEl.textContent||'');
       finishBot();
     } else {
       appendBot(text);
     }
-  } else if(currentScenario==='pictionary'){
-    if(isFinish){gameFinishGuess();finishBot()}
-    else{gameUpdateGuess(text);appendBot(text)}
-  } else if(currentScenario==='expression'){
-    if(isFinish){exprFinishJudgment();finishBot()}
-    else{exprUpdateJudgment(text);appendBot(text)}
   } else {
     if(isFinish) finishBot();
     else appendBot(text);
@@ -1272,7 +1131,7 @@ function connectWs(){
 function startLoop(){
   timer=setInterval(()=>{
     if(!active||!ws||ws.readyState!==1)return;
-    if(inflight>=1)return;
+    if(inflight>=2)return;
     const samples=collectChunk();
     if(!samples||samples.length<100)return;
     const useCam=document.getElementById('chkCam').checked;
@@ -1317,8 +1176,6 @@ async function go(){
   setSt('think','正在初始化...');
   addMsg('sys','正在连接...');
 
-  if(currentScenario==='pictionary')gameStartTimer();
-
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(SR){
     recognition=new SR();
@@ -1351,7 +1208,6 @@ function stop(){
   active=false;
   setPhase('idle');
   if(timer){clearInterval(timer);timer=null}
-  if(gameState.interval){clearInterval(gameState.interval);gameState.interval=null}
   if(recognition){try{recognition.abort()}catch(_){};recognition=null}
   curBotEl=null;
   hideLiveSub();
@@ -1360,6 +1216,7 @@ function stop(){
   ws=null;
   if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null}
   if(audioCtx){audioCtx.close();audioCtx=null;analyser=null}
+  if(playCtx){try{playCtx.close()}catch(_){};playCtx=null;pendingBufs=0;nextPlayTime=0}
   document.getElementById('cam').srcObject=null;
   document.getElementById('btnGo').disabled=false;
   document.getElementById('btnStop').disabled=true;
@@ -1372,8 +1229,7 @@ async function doReset(){
   document.getElementById('chat').innerHTML='';
   timingData=[];
   drawChart();
-  if(currentScenario==='pictionary')gameReset();
-  if(currentScenario==='expression')exprReset();
+  if(currentScenario==='hypeman')hypeReset();
   setSt('idle','待机');
   addMsg('sys','已重置');
 }
