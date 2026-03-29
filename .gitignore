@@ -9,22 +9,28 @@ ssl_key.pem
 llama.cpp-omni/build/
 llama.cpp-eval/
 
-# Temporary eval/analysis files
+# Old eval/demo artifacts (kept in git history)
+eval_results/
 eval_results_maxtoken256/
+eval_*.py
+eval_*.log
+run_*.sh
+omni_*.py
 _agent_cmd_report.txt
 analyze_results.py
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-.venv/
-venv/
 
 # Runtime output
 output/
 *.log
 /tmp/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
 
 # OS
 .DS_Store
