@@ -1,281 +1,227 @@
 # omni-lab
 
-基于 [llama.cpp-omni](https://github.com/tc-mb/llama.cpp-omni) 的 Omni 多模态模型实验室 — 端侧部署、深度优化、爆款场景探索。
+Edge-native private AI agent framework with dual-system cognitive architecture.
 
-当前已实现：在本地 GPU 上运行 MiniCPM-o 4.5 的全双工语音+视觉对话系统，含多场景演示和性能分析工具。
+Turn any GPU-equipped device into a fully private intelligent terminal: it can hear, see, speak, operate your computer, remember you, and proactively help you. All data stays on-device, forever.
 
-## 特性
-
-- **全双工语音对话** — 边听边说，模型自主决定何时回应
-- **摄像头视觉理解** — 实时捕获画面（每 2 秒一帧），支持图像问答
-- **场景演示系统** — 预设场景，一键切换（每个场景有独立 UI 和 System Prompt）：
-  - 💬 **自由对话** — 通用全双工语音对话
-  - ✨ **AI 夸夸机** — 观察摄像头画面，持续夸赞用户的每一个细节。3 种风格（热血激昂/温柔鼓励/文艺诗意），含浮动夸赞卡片、自信能量条、金句墙
-- **上下文自动管理** — 对话超长时自动刷新上下文，注入近期对话摘要保持连贯
-- **动态 System Prompt** — 支持运行时切换场景和风格，无需重启服务
-- **延迟 Profiling 仪表盘** — 实时显示 prefill/decode/端到端延迟，含 avg/p95/max 统计和趋势图
-- **性能优化** — inotify 事件驱动 TTS 推送 + tmpfs (ramdisk) 减少磁盘 I/O
-- **WebSocket 流式通信** — 低延迟双向通信，参考 [MiniCPM-o-Demo](https://github.com/OpenBMB/MiniCPM-o-Demo) 官方架构
-- **TTS 语音合成** — 模型生成文字后通过 Token2Wav 合成语音，gapless 无缝播放
-- **浏览器语音识别** — 利用 Web Speech API 实时显示用户语音转文字
-- **量化评测** — Q4_K_M / Q8_0 量化损失对比 (MMStar 视觉 + GSM8K 文本)
-- **GGUF 量化推理** — Q4_K_M 量化，约 5GB 显存即可运行
-
-## 架构
+## Architecture: Fast-in-Slow Dual System
 
 ```
-浏览器 (摄像头 + 麦克风 + Web Speech API)
-   ↕  WebSocket (wss://)
-Flask 中间件 (omni_web_demo.py, HTTPS:8080)
-   ↕  HTTP JSON + 文件系统
-llama-server (llama.cpp-omni, port 9060)
-   ├── LLM 推理 (MiniCPM-o 4.5 Q4_K_M)
-   ├── APM 音频编码 (Whisper)
-   ├── VPM 视觉编码 (SigLip2)
-   └── TTS 语音合成 (Token2Wav)
+System 1 (Fast)                     System 2 (Slow)
+MiniCPM-o 4.5  ~5GB                Qwen3.5 27B  ~16GB
+────────────────────                ────────────────────
+Real-time voice (full-duplex)       Deep reasoning + planning
+Camera/screen understanding         Tool calling (search/files/shell)
+TTS voice synthesis                 Computer control (mouse/keyboard)
+Always-on, <1s latency             On-demand, 3-10s latency
+Handles 80% of interactions         Handles 20% action requests
 ```
 
-## 目录结构
+Both models share the GPU via serial scheduling (GPUScheduler).
+
+## Project Structure
 
 ```
-.
-├── README.md                 # 本文件
-├── omni_web_demo.py          # Web 全双工 Demo（场景选择 + Profiling）
-├── omni_duplex_demo.py       # 终端全双工 Demo（命令行交互）
-├── run_omni_demo.sh          # 终端 Demo 启动脚本
-├── download_models.sh        # 模型下载脚本
-├── eval_vision.py            # MMStar 视觉 benchmark 评测脚本
-├── eval_text.py              # GSM8K 文本数学推理评测脚本
-├── run_q8_eval.sh            # Q8_0 一键评测脚本
-├── official_ref_audio.wav    # 官方 TTS 参考音频（声音克隆）
-├── llama_omni_zh_prompt.patch # 中文提示词补丁（编译前 apply）
-├── llama.cpp-omni/           # 推理引擎（C++, 需编译, git submodule）
-│   ├── build/bin/
-│   │   ├── llama-server      # HTTP 推理服务
-│   │   └── llama-omni-cli    # CLI 测试工具
-│   └── tools/omni/           # 多模态推理核心代码
-├── eval_results/             # 量化评测结果
-│   ├── REPORT.md             # 量化对比评测报告
-│   ├── mmstar_results_Q4_K_M.jsonl
-│   ├── mmstar_summary_Q4_K_M.json
-│   └── ...
-└── models/                   # 模型文件（不含在代码库中）
-    └── MiniCPM-o-4_5-gguf/
-        ├── MiniCPM-o-4_5-Q4_K_M.gguf      # 主模型 (~4.8GB)
-        ├── MiniCPM-o-4_5-Q8_0.gguf         # 高精度模型 (~8.7GB, 可选)
-        ├── audio/                           # 音频编码器
-        ├── vision/                          # 视觉编码器
-        ├── tts/                             # TTS 模型
-        └── token2wav-gguf/                  # 语音合成 vocoder
+omni-lab/
+├── edge_agent/                      # Framework core
+│   ├── __init__.py                  # EdgeAgent orchestrator (175 lines)
+│   ├── events.py                    # Event types + EventBus (169 lines)
+│   ├── state.py                     # StateMachine (57 lines)
+│   ├── scheduler.py                 # GPUScheduler (43 lines)
+│   ├── router.py                    # IntentRouter + KeywordRouter (39 lines)
+│   ├── memory.py                    # MemoryStore + Context (119 lines)
+│   ├── tools.py                     # ToolRegistry + @tool decorator (90 lines)
+│   │
+│   ├── providers/
+│   │   ├── __init__.py              # PerceptionProvider + ReasoningProvider protocols
+│   │   ├── minicpm.py               # System 1: MiniCPM-o via llama-server (295 lines)
+│   │   └── ollama.py                # System 2: Qwen via Ollama + ReAct loop (119 lines)
+│   │
+│   ├── channels/
+│   │   ├── __init__.py              # Channel protocol
+│   │   ├── cli.py                   # Terminal channel (57 lines)
+│   │   └── websocket.py             # Browser channel: voice + camera + agent (548 lines)
+│   │
+│   └── tools_builtin/
+│       ├── __init__.py              # ALL_TOOLS export
+│       ├── web.py                   # web_search (DuckDuckGo), web_fetch
+│       ├── filesystem.py            # read_file, write_file, edit_file, list_dir
+│       ├── shell.py                 # shell (with safety filter)
+│       ├── computer.py              # screenshot, click, type_text, scroll, hotkey
+│       └── system.py                # memory_save
+│
+├── apps/
+│   ├── assistant.py                 # CLI assistant: System 2 only (37 lines)
+│   └── second_brain.py              # Full dual-system app (77 lines)
+│
+├── memory/                          # Agent memory (plain-text Markdown)
+│   ├── SOUL.md                      # AI identity definition
+│   ├── USER.md                      # User profile (auto-populated)
+│   └── MEMORY.md                    # Long-term facts (AI writes)
+│
+├── docs/
+│   ├── ARCHITECTURE.md              # Detailed architecture design (Chinese, 1254 lines)
+│   └── SCENARIOS.md                 # "Private Second Brain" scenario (Chinese, 671 lines)
+│
+├── llama.cpp-omni/                  # Submodule: llama-server for MiniCPM-o
+└── pyproject.toml                   # Python package definition
 ```
 
-## 环境要求
+## Key Components
 
-| 项目 | 要求 |
-|------|------|
-| GPU | NVIDIA GPU, >= 8GB VRAM (推荐 16GB+) |
-| CUDA | >= 12.0 |
-| OS | Linux (已测试 aarch64 / x86_64) |
-| Python | >= 3.10 |
-| CMake | >= 3.16 |
-| 浏览器 | Chrome / Edge (需 HTTPS 才能使用麦克风和摄像头) |
+| Component | Description |
+|-----------|-------------|
+| **EdgeAgent** | Top-level orchestrator. Wires EventBus, GPUScheduler, MemoryStore, ToolRegistry. Handles event routing and System 2 delegation. |
+| **EventBus** | Async pub/sub for decoupled component communication. 12 event types defined. |
+| **GPUScheduler** | `use_reasoning()` context manager: pauses System 1 before System 2 runs, resumes after. Both models stay in VRAM. |
+| **IntentRouter** | Decides fast (System 1) vs slow (System 2). V1 = `KeywordRouter` with Chinese trigger words. |
+| **MemoryStore** | Three-tier: `SOUL.md` (identity), `USER.md` (user profile), `MEMORY.md` (AI-written facts). All plain-text Markdown. |
+| **ToolRegistry** | Converts `@tool`-decorated functions to OpenAI function-calling schemas. 12 built-in tools. |
+| **MiniCPMProvider** | System 1: talks to `llama-server` HTTP API (omni_init, prefill, decode, break, reset, session config, TTS). |
+| **OllamaProvider** | System 2: Ollama async client with multi-iteration ReAct loop and tool execution. |
+| **WebSocketChannel** | Flask + flask-sock, embedded HTML/JS frontend, camera + mic + speech recognition, HTTPS support. |
+| **CLIChannel** | Background thread reads stdin, emits `ChannelMessage`. For development/debugging. |
 
-## 快速开始
+## Quick Start
 
-### 1. 克隆项目
+### Prerequisites
+
+- Python 3.11+
+- NVIDIA GPU with CUDA (GB10 / RTX 4090 / Jetson recommended)
+- Ollama installed: https://ollama.com
+
+### 1. Install
 
 ```bash
-git clone --recursive https://github.com/<your-username>/omni-lab.git
-cd omni-lab
+cd /home/pineapi/gy
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
 ```
 
-### 2. 下载模型
+### 2. Pull the reasoning model
 
 ```bash
-bash download_models.sh
+ollama pull qwen3.5:27b
+# Or smaller model for less VRAM:
+# ollama pull qwen3.5:14b
+# ollama pull qwen3.5:4b
 ```
 
-模型文件约 10GB，来自 [HuggingFace openbmb/MiniCPM-o-4_5-gguf](https://huggingface.co/openbmb/MiniCPM-o-4_5-gguf)。下载完成后需要创建 projector 软链接：
+### 3a. Run CLI Assistant (System 2 only)
+
+Minimal setup — just Ollama, no llama-server needed.
 
 ```bash
-ln -s models/MiniCPM-o-4_5-gguf/tts/MiniCPM-o-4_5-projector-F16.gguf \
-      models/MiniCPM-o-4_5-gguf/token2wav-gguf/MiniCPM-o-4_5-projector-F16.gguf
+# Terminal 1: Start Ollama
+ollama serve
+
+# Terminal 2: Start the assistant
+cd /home/pineapi/gy
+source .venv/bin/activate
+python apps/assistant.py
 ```
 
-### 3. 编译 llama.cpp-omni
+Type messages in the terminal. The AI can:
+- Search the web (`web_search`, `web_fetch`)
+- Read/write/edit files
+- Run shell commands
+- Save facts to long-term memory
+
+### 3b. Run Full Second Brain (System 1 + System 2)
+
+Requires both Ollama and llama-server with MiniCPM-o model.
 
 ```bash
-cd llama.cpp-omni
+# Terminal 1: Start Ollama
+ollama serve
 
-# 应用中文提示词补丁（使模型以普通话回答，而非英文/粤语）
-git apply ../llama_omni_zh_prompt.patch
+# Terminal 2: Start llama-server with MiniCPM-o 4.5
+cd llama.cpp-omni/build/bin
+./llama-server \
+    --model /path/to/MiniCPM-o-4_5-Q4_K_M.gguf \
+    --port 9060 \
+    --gpu-layers 99
 
-cmake -B build \
-  -DLLAMA_CUDA=ON \
-  -DLLAMA_CURL=OFF \
-  -DCMAKE_CUDA_ARCHITECTURES=native \
-  -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target llama-server llama-omni-cli -j$(nproc)
-cd ..
+# Terminal 3: Start Second Brain
+cd /home/pineapi/gy
+source .venv/bin/activate
+python apps/second_brain.py
 ```
 
-### 4. 生成 SSL 证书
+Open `https://localhost:8080` in your browser (or `http://` if no SSL certs).
 
-浏览器的麦克风/摄像头 API 要求 HTTPS。生成自签名证书：
+Features:
+- Real-time voice conversation (full-duplex via MiniCPM-o)
+- Camera feed for visual understanding
+- Speech recognition → intent routing → System 2 tool calls
+- Web search, file operations, shell commands
+- Long-term memory in Markdown
+
+### Optional: HTTPS for browser microphone
+
+Browsers require HTTPS for microphone access on non-localhost URLs. Generate self-signed certs:
 
 ```bash
 openssl req -x509 -newkey rsa:2048 -keyout ssl_key.pem -out ssl_cert.pem \
-  -days 365 -nodes -subj "/CN=localhost"
+    -days 365 -nodes -subj '/CN=localhost'
 ```
 
-### 5. 安装 Python 依赖
+### Optional: Computer-use tools
 
 ```bash
-pip install flask flask-sock numpy soundfile requests inotify
+pip install -e ".[computer]"
 ```
 
-### 6. 启动服务
+## Hardware Compatibility
 
-**终端 1 — 启动推理服务：**
+| Hardware | VRAM | System 1 | System 2 |
+|----------|------|----------|----------|
+| GB10/GB200 | 128 GB | MiniCPM-o Q4 (5GB) | Qwen3.5 27B Q4 (16GB) |
+| RTX 4090 | 24 GB | MiniCPM-o Q4 (5GB) | Qwen3.5 9B Q4 (6GB) |
+| RTX 3060 | 12 GB | MiniCPM-o Q4 (5GB) | Qwen3.5 4B Q4 (3GB) |
+| Jetson Orin | 32-64 GB | MiniCPM-o Q4 (5GB) | Qwen3.5 14B Q4 (9GB) |
 
-```bash
-./llama.cpp-omni/build/bin/llama-server \
-  --host 0.0.0.0 --port 9060 \
-  --model ./models/MiniCPM-o-4_5-gguf/MiniCPM-o-4_5-Q4_K_M.gguf \
-  -ngl 99 --ctx-size 4096 --repeat-penalty 1.05 --temp 0.7
-```
+## Privacy
 
-等待出现 `"status":"ok"` 后继续。
+- All model inference is 100% local
+- All data stored in local filesystem (plain-text Markdown)
+- `web_search` / `web_fetch` are the only network exit points (can be disabled)
+- Memory is fully auditable: user can review, edit, delete at any time
 
-**终端 2 — 启动 Web Demo：**
+## Implementation Status
 
-```bash
-python3 omni_web_demo.py --port 8080 --llama-port 9060
-```
+### Done (v0.1)
 
-### 7. 打开浏览器
+- [x] Framework core: EdgeAgent, EventBus, StateMachine, GPUScheduler
+- [x] IntentRouter with keyword matching (Chinese + English triggers)
+- [x] MemoryStore: three-tier Markdown memory (SOUL/USER/MEMORY)
+- [x] ToolRegistry with 12 built-in tools
+- [x] OllamaProvider: ReAct loop with multi-iteration tool calling
+- [x] MiniCPMProvider: full llama-server API integration (init/prefill/decode/break/reset/TTS)
+- [x] CLIChannel: terminal-based assistant
+- [x] WebSocketChannel: browser UI with camera + mic + speech recognition
+- [x] GPU serial scheduling (pause System 1 → run System 2 → resume)
+- [x] Context injection (System 2 results → System 1 awareness)
+- [x] Auto-reset on context overflow
 
-访问 `https://<your-ip>:8080`，接受自签名证书警告，点击「开始对话」。
+### TODO
 
-## 使用说明
-
-### Web Demo (`omni_web_demo.py`)
-
-- **场景选择** — 顶部栏选择场景（自由对话/AI 夸夸机），需要在停止状态下切换
-- **夸夸机风格切换** — 在 AI 夸夸机模式下，可实时切换热血激昂/温柔鼓励/文艺诗意三种风格
-- **语音对话** — 点击「开始对话」，对着麦克风说话。模型会自动回应并播放语音。
-- **文本对话** — 切换到「文本对话」标签，直接输入文字测试模型。
-- **摄像头** — 勾选「摄像头」后，模型可以看到你的画面并结合视觉回答。
-- **延迟监控** — 右侧面板实时显示 prefill/decode/端到端延迟统计和趋势图
-- **重置** — 点击「重置」清除对话历史和模型状态。
-
-### 终端 Demo (`omni_duplex_demo.py`)
-
-无需浏览器，直接在终端通过麦克风和扬声器交互：
-
-```bash
-bash run_omni_demo.sh
-# 或
-python3 omni_duplex_demo.py --llama-port 9060
-```
-
-### 命令行参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `--port` | 8080 | Web Demo 端口 |
-| `--llama-port` | 9060 | llama-server 端口 |
-| `--llama-host` | 127.0.0.1 | llama-server 地址 |
-| `--no-ssl` | - | 禁用 HTTPS（不推荐） |
-| `--ssl-cert` | ssl_cert.pem | SSL 证书路径 |
-| `--ssl-key` | ssl_key.pem | SSL 密钥路径 |
-
-## 模型文件清单
-
-从 HuggingFace 下载，共约 10GB：
-
-| 文件 | 大小 | 说明 |
-|------|------|------|
-| `MiniCPM-o-4_5-Q4_K_M.gguf` | ~4.8 GB | 主 LLM (Q4_K_M 量化) |
-| `vision/MiniCPM-o-4_5-vision-F16.gguf` | ~2.5 GB | 视觉编码器 (SigLip2) |
-| `tts/MiniCPM-o-4_5-tts-F16.gguf` | ~1.1 GB | TTS 模型 |
-| `tts/MiniCPM-o-4_5-projector-F16.gguf` | ~15 MB | TTS Projector |
-| `audio/MiniCPM-o-4_5-audio-F16.gguf` | ~629 MB | 音频编码器 (Whisper) |
-| `token2wav-gguf/flow_matching.gguf` | ~437 MB | Flow Matching 模型 |
-| `token2wav-gguf/prompt_cache.gguf` | ~211 MB | Prompt 缓存 |
-| `token2wav-gguf/encoder.gguf` | ~144 MB | Token2Wav 编码器 |
-| `token2wav-gguf/hifigan2.gguf` | ~79 MB | HiFi-GAN 声码器 |
-| `token2wav-gguf/flow_extra.gguf` | ~13 MB | Flow 辅助模型 |
-
-## 技术细节
-
-### 全双工通信协议 (WebSocket)
-
-```
-Client → {"type":"prepare", "media_type":2, "duplex":true, "scenario":"hypeman"}
-Server → {"type":"prepared", "scenario":"hypeman"}
-
-Client → {"type":"audio_chunk", "audio":"<base64 WAV>", "frame":"<base64 JPEG>"}
-Server → {"type":"result", "text":"...", "is_listen":true/false, "timing":{...}}
-Server → {"type":"audio", "chunks":[{"pcm":"<base64 float32>", "sr":24000}]}
-
-Client → {"type":"switch_style", "style":"gentle"}  # 切换夸夸机风格
-Client → {"type":"user_text", "text":"..."}          # 用户语音转文字记录
-Client → {"type":"stop"}
-Server → {"type":"stopped"}
-```
-
-### 推理流程
-
-每 1 秒为一个周期：
-1. 浏览器采集 1s 音频（16kHz mono WAV）+ 摄像头帧（JPEG）
-2. 通过 WebSocket 发送到 Flask 中间件
-3. 中间件调用 `llama-server` 的 `/v1/stream/prefill` 和 `/v1/stream/decode`
-4. 模型返回 `is_listen`（继续听）或文本内容（开始说话）
-5. TTS 后台线程自动检测新生成的 WAV 文件并推送到浏览器
-6. 浏览器使用 Web Audio API 进行 gapless 无缝播放
-
-## 量化评测
-
-### 视觉评测 (MMStar)
-
-使用 [MMStar](https://mmstar-benchmark.github.io/) 视觉 benchmark 评估量化损失（300 题子集, seed=42）：
-
-| 模型版本 | MMStar 准确率 | 量化损失 | 平均延迟 | 模型大小 |
-|---|---|---|---|---|
-| bf16 (官方) | **73.1%** | -- | -- | ~18 GB |
-| Q8_0 | **69.67%** | -3.43 pp | 3.97s | ~8.7 GB |
-| Q4_K_M | **70.33%** | -2.77 pp | 2.50s | ~4.8 GB |
-
-### 文本评测 (GSM8K)
-
-使用 [GSM8K](https://github.com/openai/grade-school-math) 数学推理 benchmark（300 题子集, seed=42, max_tokens=1024）：
-
-| 模型版本 | GSM8K 准确率 | 平均延迟 |
-|---|---|---|
-| Q4_K_M | **70.33%** | 2.06s |
-
-**结论**: Q4_K_M 是最佳性价比选择 — 精度与 Q8_0 相当，延迟更低，显存仅需一半。科学技术类（~50%）和细粒度感知（~65%）是当前弱项。
-
-详见 [`eval_results/REPORT.md`](eval_results/REPORT.md)。
-
-运行评测：
-
-```bash
-# 视觉评测
-python3 eval_vision.py --samples 300 --tag Q4_K_M
-python3 eval_vision.py --samples 300 --tag Q8_0
-
-# 文本数学推理评测
-python3 eval_text.py --samples 300 --tag Q4_K_M
-```
-
-## 致谢
-
-- [MiniCPM-o 4.5](https://github.com/OpenBMB/MiniCPM-o) — 面壁智能 & OpenBMB
-- [llama.cpp-omni](https://github.com/tc-mb/llama.cpp-omni) — GGUF 多模态推理引擎
-- [MiniCPM-o-Demo](https://github.com/OpenBMB/MiniCPM-o-Demo) — 官方 PyTorch Demo（架构参考）
+- [ ] **StateMachine integration**: defined but `transition()` is never called from EdgeAgent
+- [ ] **VisualScene pipeline**: handler exists but nothing emits `VisualScene` events yet
+- [ ] **Passive capture loop**: `CaptureEvent`/`DigestRequest`/`ProactiveHint` events defined but no emitters — the automatic screen-capture → digest → memory_save pipeline is not wired
+- [ ] **WebSocketChannel.send()**: currently a no-op (`pass`)
+- [ ] **NanobotProvider**: documented in ARCHITECTURE.md but not implemented
+- [ ] **TelegramChannel / FeishuChannel**: documented but not implemented
+- [ ] **LLMRouter (V2)**: use System 2 for intent classification instead of keyword matching
+- [ ] **Memory compression**: daily merge of similar/redundant memories
+- [ ] **Memory vector search**: embedding-based retrieval (currently keyword only)
+- [ ] **Cron / heartbeat**: proactive scheduled tasks
+- [ ] **Scripts**: `install.sh`, `start.sh`, `download_models.sh`
+- [ ] **Docker Compose**: containerized deployment
+- [ ] **Tests**: no automated tests yet
+- [ ] **Sample apps**: `hypeman.py`, `narrator.py` from architecture doc
 
 ## License
 
-本项目 Demo 代码以 MIT 协议开源。模型权重请遵循 [MiniCPM-o 4.5 许可协议](https://github.com/OpenBMB/MiniCPM-o)。
+MIT
