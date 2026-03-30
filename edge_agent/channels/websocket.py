@@ -22,22 +22,22 @@ import asyncio
 import json
 import logging
 import threading
-import time
-from typing import TYPE_CHECKING, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, Optional
 
 from ..events import (
     EventBus,
-    UserSpeech,
+    VisualScene,
     ThinkingStarted,
     ReasoningDone,
-    ChannelMessage,
 )
 
 if TYPE_CHECKING:
-    from ..providers.minicpm import MiniCPMProvider
     from .. import EdgeAgent
 
 log = logging.getLogger(__name__)
+
+WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 
 class WebSocketChannel:
@@ -51,6 +51,7 @@ class WebSocketChannel:
         self._port = port
         self._bus: Optional[EventBus] = None
         self._app = None
+        self._active_senders: list[Callable] = []
 
     async def start(self, bus: EventBus) -> None:
         self._bus = bus
@@ -60,10 +61,20 @@ class WebSocketChannel:
         log.info("WebSocket channel started on %s:%d", self._host, self._port)
 
     async def send(self, text: str, media: Optional[bytes] = None) -> None:
-        pass
+        """Push a message to all active WebSocket clients."""
+        msg = json.dumps({"type": "agent_result", "text": text}, ensure_ascii=False)
+        dead: list[Callable] = []
+        for sender in list(self._active_senders):
+            if not sender(msg):
+                dead.append(sender)
+        for s in dead:
+            try:
+                self._active_senders.remove(s)
+            except ValueError:
+                pass
 
     def _setup_flask(self) -> None:
-        from flask import Flask, jsonify
+        from flask import Flask, send_from_directory, jsonify
         from flask_sock import Sock
 
         app = Flask(__name__)
@@ -73,7 +84,13 @@ class WebSocketChannel:
 
         @app.route("/")
         def index():
-            return _get_html()
+            if WEB_DIR.exists() and (WEB_DIR / "index.html").exists():
+                return send_from_directory(str(WEB_DIR), "index.html")
+            return "<h1>Edge Agent</h1><p>Web UI not found. Place files in edge_agent/web/</p>"
+
+        @app.route("/<path:filename>")
+        def static_files(filename):
+            return send_from_directory(str(WEB_DIR), filename)
 
         @app.route("/api/status")
         def api_status():
@@ -101,7 +118,6 @@ class WebSocketChannel:
 
     def _run_flask(self) -> None:
         import ssl
-        from pathlib import Path
 
         cert = Path("ssl_cert.pem")
         key = Path("ssl_key.pem")
@@ -136,6 +152,8 @@ class WebSocketChannel:
             except Exception:
                 ws_closed[0] = True
                 return False
+
+        self._active_senders.append(safe_send)
 
         def on_thinking(event: ThinkingStarted):
             safe_send(json.dumps({
@@ -201,6 +219,13 @@ class WebSocketChannel:
                                 "type": "audio",
                                 "chunks": result.audio_chunks,
                             }))
+                        if frame_b64 and result.text and result.text.strip():
+                            try:
+                                loop.run_until_complete(
+                                    self._bus.emit(VisualScene(description=result.text))
+                                )
+                            except Exception:
+                                log.debug("VisualScene emit failed")
                     except Exception as e:
                         log.error("audio_chunk error: %s", e)
                         safe_send(json.dumps({"type": "error", "error": str(e)}))
@@ -247,6 +272,8 @@ class WebSocketChannel:
                     safe_send(json.dumps({"type": "reset_done"}))
 
         finally:
+            if safe_send in self._active_senders:
+                self._active_senders.remove(safe_send)
             agent.bus.off(ThinkingStarted, on_thinking)
             agent.bus.off(ReasoningDone, on_reasoning_done)
             if perception:
@@ -256,293 +283,3 @@ class WebSocketChannel:
                     pass
             loop.close()
             log.info("WebSocket session ended")
-
-
-def _get_html() -> str:
-    """Return the frontend HTML page."""
-    return r"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Edge Agent - Private AI Assistant</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',system-ui,sans-serif;background:#0a0a0f;color:#e0e0e8;min-height:100vh;display:flex;flex-direction:column}
-.hdr{background:linear-gradient(135deg,#1a1a2e,#16213e);padding:14px 24px;border-bottom:1px solid #2a2a4a;display:flex;align-items:center;gap:16px}
-.hdr h1{font-size:17px;color:#a0c4ff}.hdr .sub{font-size:11px;color:#666;margin-top:2px}
-.status-dots{margin-left:auto;display:flex;gap:10px;align-items:center}
-.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-.dot-ok{background:#51cf66}.dot-off{background:#666}.dot-busy{background:#ffd43b;animation:pulse 1s infinite}
-@keyframes pulse{50%{opacity:.3}}
-.status-label{font-size:10px;color:#888}
-.main{display:flex;gap:12px;padding:12px;flex:1;max-width:1400px;margin:0 auto;width:100%}
-.col{background:#12121f;border:1px solid #2a2a4a;border-radius:10px;padding:14px;display:flex;flex-direction:column}
-.col-left{flex:0 0 320px}.col-center{flex:1;min-width:0}.col-right{flex:0 0 280px}
-.col h2{font-size:11px;font-weight:600;color:#7b8cde;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px}
-video{width:100%;border-radius:8px;background:#000;margin-bottom:8px}
-.ctrls{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
-.btn{padding:7px 16px;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;transition:.2s}
-.btn-p{background:#3b5bdb;color:#fff}.btn-p:hover{background:#4c6ef5}
-.btn-d{background:#c92a2a;color:#fff}.btn-d:hover{background:#e03131}
-.btn-s{background:#2a2a4a;color:#ccc}.btn-s:hover{background:#3a3a5a}
-.btn:disabled{opacity:.4;cursor:not-allowed}
-.chat{flex:1;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:6px}
-.msg{padding:8px 12px;border-radius:9px;max-width:88%;font-size:13px;line-height:1.5;word-break:break-word}
-.msg-user{background:#1e3a5f;color:#a0c4ff;align-self:flex-end}
-.msg-bot{background:#1a2a1a;color:#a0ffb0;align-self:flex-start}
-.msg-agent{background:#2a1a2a;color:#e0a0ff;align-self:flex-start;border-left:3px solid #9775fa}
-.msg-sys{background:#2a2a3a;color:#888;align-self:center;font-size:11px;padding:4px 10px}
-.si{padding:7px 12px;border-radius:7px;text-align:center;font-size:13px;font-weight:600;margin-bottom:8px;transition:.3s}
-.si-listen{background:#1a2a1a;color:#51cf66;border:1px solid #2b8a3e}
-.si-think{background:#2a2a1a;color:#ffd43b;border:1px solid #5c4813}
-.si-speak{background:#1a1a3a;color:#748ffc;border:1px solid #3b5bdb}
-.si-idle{background:#1a1a1a;color:#666;border:1px solid #333}
-.memory-card{background:#0f0f1a;border-radius:8px;padding:10px;margin-bottom:8px;font-size:11px;color:#888;max-height:200px;overflow-y:auto}
-.memory-card h3{font-size:11px;color:#7b8cde;margin-bottom:6px}
-.tool-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;background:#2a1a3a;color:#c084fc;margin:2px}
-#log{font-family:monospace;font-size:10px;color:#555;max-height:80px;overflow-y:auto;padding:5px;background:#0a0a14;border-radius:5px;margin-top:6px}
-@media(max-width:900px){.main{flex-direction:column}.col-left,.col-right{flex:0 0 auto}}
-</style>
-</head>
-<body>
-<div class="hdr">
-  <div>
-    <h1>Edge Agent</h1>
-    <div class="sub">Private AI Assistant | System 1 + System 2</div>
-  </div>
-  <div class="status-dots">
-    <span class="dot dot-off" id="dotS1"></span><span class="status-label">System 1</span>
-    <span class="dot dot-off" id="dotS2"></span><span class="status-label">System 2</span>
-  </div>
-</div>
-<div class="main">
-  <div class="col col-left">
-    <h2>Camera & Controls</h2>
-    <video id="cam" autoplay playsinline muted></video>
-    <div class="ctrls">
-      <button class="btn btn-p" id="btnStart" onclick="start()">Start</button>
-      <button class="btn btn-d" id="btnStop" onclick="stop()" disabled>Stop</button>
-      <button class="btn btn-s" onclick="resetCtx()">Reset</button>
-    </div>
-    <div class="si si-idle" id="stateInd">IDLE</div>
-    <div id="log"></div>
-  </div>
-  <div class="col col-center">
-    <h2>Conversation</h2>
-    <div class="chat" id="chat"></div>
-  </div>
-  <div class="col col-right">
-    <h2>Agent Status</h2>
-    <div class="memory-card" id="agentInfo">
-      <h3>System 2 (Reasoning)</h3>
-      <p>Waiting for activation...</p>
-    </div>
-    <h2>Tools Used</h2>
-    <div id="toolsUsed" style="min-height:40px"></div>
-    <h2 style="margin-top:12px">Recent Memory</h2>
-    <div class="memory-card" id="memoryView">
-      <p>No memories yet.</p>
-    </div>
-  </div>
-</div>
-<script>
-const PROTO = location.protocol === 'https:' ? 'wss' : 'ws';
-let ws, mediaStream, audioCtx, recorder, camVideo;
-let sending = false;
-const FRAME_EVERY_N = 5;
-let frameCounter = 0;
-
-function lg(t) {
-  const el = document.getElementById('log');
-  const now = new Date().toLocaleTimeString();
-  el.innerHTML += `[${now}] ${t}\n`;
-  el.scrollTop = el.scrollHeight;
-}
-
-function addMsg(cls, text) {
-  const chat = document.getElementById('chat');
-  const d = document.createElement('div');
-  d.className = 'msg ' + cls;
-  d.textContent = text;
-  chat.appendChild(d);
-  chat.scrollTop = chat.scrollHeight;
-}
-
-function setState(s) {
-  const el = document.getElementById('stateInd');
-  el.textContent = s;
-  el.className = 'si si-' + s.toLowerCase();
-}
-
-async function start() {
-  try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({audio: true, video: true});
-    camVideo = document.getElementById('cam');
-    camVideo.srcObject = mediaStream;
-
-    audioCtx = new AudioContext({sampleRate: 16000});
-    const src = audioCtx.createMediaStreamSource(mediaStream);
-    const proc = audioCtx.createScriptProcessor(4096, 1, 1);
-    let buf = [];
-    proc.onaudioprocess = e => {
-      if (!sending) return;
-      const d = e.inputBuffer.getChannelData(0);
-      buf.push(new Float32Array(d));
-      if (buf.length >= 4) {
-        const total = buf.reduce((a, b) => a + b.length, 0);
-        const merged = new Float32Array(total);
-        let off = 0;
-        for (const b2 of buf) { merged.set(b2, off); off += b2.length; }
-        buf = [];
-        sendChunk(merged);
-      }
-    };
-    src.connect(proc);
-    proc.connect(audioCtx.destination);
-
-    ws = new WebSocket(`${PROTO}://${location.host}/ws/duplex`);
-    ws.onopen = () => { lg('WS connected'); ws.send(JSON.stringify({type:'prepare'})); };
-    ws.onmessage = e => handleMsg(JSON.parse(e.data));
-    ws.onerror = () => lg('WS error');
-    ws.onclose = () => { lg('WS closed'); sending = false; setState('IDLE'); };
-
-    // Speech recognition for text
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      const sr = new SR();
-      sr.continuous = true; sr.interimResults = false; sr.lang = 'zh-CN';
-      sr.onresult = e => {
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          if (e.results[i].isFinal) {
-            const t = e.results[i][0].transcript.trim();
-            if (t) {
-              addMsg('msg-user', t);
-              ws.send(JSON.stringify({type:'user_text', text:t}));
-            }
-          }
-        }
-      };
-      sr.onerror = () => {};
-      sr.onend = () => { if (sending) sr.start(); };
-      sr.start();
-      window._sr = sr;
-    }
-
-    document.getElementById('btnStart').disabled = true;
-    document.getElementById('btnStop').disabled = false;
-  } catch(e) { lg('Error: ' + e.message); }
-}
-
-function sendChunk(pcm) {
-  if (!ws || ws.readyState !== 1) return;
-  const wav = encodeWav(pcm, 16000);
-  const b64audio = btoa(String.fromCharCode(...new Uint8Array(wav)));
-
-  let b64frame = '';
-  frameCounter++;
-  if (frameCounter % FRAME_EVERY_N === 0 && camVideo && camVideo.videoWidth > 0) {
-    const c = document.createElement('canvas');
-    c.width = 320; c.height = 240;
-    c.getContext('2d').drawImage(camVideo, 0, 0, 320, 240);
-    b64frame = c.toDataURL('image/jpeg', 0.6).split(',')[1];
-  }
-  ws.send(JSON.stringify({type:'audio_chunk', audio:b64audio, frame:b64frame}));
-}
-
-function encodeWav(samples, sr) {
-  const buf = new ArrayBuffer(44 + samples.length * 2);
-  const v = new DataView(buf);
-  const s = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
-  s(0, 'RIFF'); v.setUint32(4, 36 + samples.length * 2, true); s(8, 'WAVE');
-  s(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
-  v.setUint16(22, 1, true); v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true);
-  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-  s(36, 'data'); v.setUint32(40, samples.length * 2, true);
-  for (let i = 0; i < samples.length; i++) {
-    let s16 = Math.max(-1, Math.min(1, samples[i])) * 0x7FFF;
-    v.setInt16(44 + i * 2, s16, true);
-  }
-  return buf;
-}
-
-function handleMsg(m) {
-  if (m.type === 'prepared') {
-    sending = true;
-    setState('LISTEN');
-    lg('System 1 ready');
-    document.getElementById('dotS1').className = 'dot dot-ok';
-  } else if (m.type === 'result') {
-    if (m.text && m.text.trim()) {
-      addMsg('msg-bot', m.text);
-    }
-    setState(m.is_listen ? 'LISTEN' : 'SPEAK');
-  } else if (m.type === 'audio') {
-    playAudio(m.chunks);
-  } else if (m.type === 'agent_status') {
-    setState('THINK');
-    document.getElementById('dotS2').className = 'dot dot-busy';
-    document.getElementById('agentInfo').innerHTML = '<h3>System 2</h3><p>Thinking...</p>';
-  } else if (m.type === 'agent_result') {
-    setState('LISTEN');
-    document.getElementById('dotS2').className = 'dot dot-ok';
-    addMsg('msg-agent', m.text);
-    // Show tools used
-    const toolsDiv = document.getElementById('toolsUsed');
-    if (m.tools_used && m.tools_used.length > 0) {
-      toolsDiv.innerHTML = m.tools_used.map(t => `<span class="tool-badge">${t}</span>`).join('');
-    }
-    document.getElementById('agentInfo').innerHTML = '<h3>System 2</h3><p>Done.</p>';
-    // TTS via browser
-    if (m.text && 'speechSynthesis' in window) {
-      const u = new SpeechSynthesisUtterance(m.text);
-      u.lang = 'zh-CN'; u.rate = 1.1;
-      speechSynthesis.speak(u);
-    }
-  } else if (m.type === 'error') {
-    lg('Error: ' + m.error);
-  }
-}
-
-function playAudio(chunks) {
-  if (!audioCtx) return;
-  for (const c of chunks) {
-    try {
-      const obj = typeof c === 'string' ? JSON.parse(c) : c;
-      const raw = atob(obj.pcm);
-      const arr = new Float32Array(raw.length / 4);
-      const dv = new DataView(new Uint8Array([...raw].map(c2 => c2.charCodeAt(0))).buffer);
-      for (let i = 0; i < arr.length; i++) arr[i] = dv.getFloat32(i * 4, true);
-      const buf = audioCtx.createBuffer(1, arr.length, obj.sr || 16000);
-      buf.getChannelData(0).set(arr);
-      const src2 = audioCtx.createBufferSource();
-      src2.buffer = buf;
-      src2.connect(audioCtx.destination);
-      src2.start();
-    } catch(e) {}
-  }
-}
-
-function stop() {
-  sending = false;
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify({type:'stop'}));
-  if (window._sr) try { window._sr.stop(); } catch(e) {}
-  if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
-  setState('IDLE');
-  document.getElementById('btnStart').disabled = false;
-  document.getElementById('btnStop').disabled = true;
-}
-
-function resetCtx() {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify({type:'reset'}));
-  addMsg('msg-sys', 'Context reset');
-}
-
-// Check status on load
-fetch('/api/status').then(r=>r.json()).then(d=>{
-  document.getElementById('dotS1').className = 'dot ' + (d.system1 ? 'dot-ok' : 'dot-off');
-  document.getElementById('dotS2').className = 'dot ' + (d.system2 ? 'dot-ok' : 'dot-off');
-}).catch(()=>{});
-</script>
-</body>
-</html>"""

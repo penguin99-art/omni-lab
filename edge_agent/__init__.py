@@ -19,8 +19,6 @@ from .events import (
     VisualScene,
     ThinkingStarted,
     ReasoningDone,
-    SpeakRequest,
-    MemoryUpdated,
 )
 from .state import StateMachine, State
 from .scheduler import GPUScheduler
@@ -81,14 +79,18 @@ class EdgeAgent:
     # -- Event handlers --------------------------------------------------------
 
     async def _handle_user_speech(self, event: UserSpeech) -> None:
+        self._set_state(State.ROUTING)
         self.memory.append_turn("user", event.text)
         intent = self.router.classify(event.text, self._last_visual)
         log.info("Intent: %s for '%s'", intent, event.text[:60])
 
         if intent == "slow":
             await self._delegate_to_system2(event.text, reply_channel=None)
+        else:
+            self._set_state(State.LISTENING)
 
     async def _handle_channel_message(self, event: ChannelMessage) -> None:
+        self._set_state(State.ROUTING)
         self.memory.append_turn("user", event.text)
         log.info("[%s/%s] %s", event.channel, event.sender, event.text[:60])
 
@@ -113,10 +115,11 @@ class EdgeAgent:
                 await reply_channel.send(msg)
             return
 
+        self._set_state(State.THINKING)
         await self.bus.emit(ThinkingStarted(query=text))
 
         async with self.scheduler.use_reasoning():
-            context = self.memory.build_context()
+            context = self.memory.build_context(query=text)
             full_message = text
             if self._last_visual:
                 full_message += f"\n\n[Current visual scene: {self._last_visual}]"
@@ -130,6 +133,7 @@ class EdgeAgent:
 
         self.memory.append_turn("assistant", result.text)
         await self.bus.emit(ReasoningDone(text=result.text, tools_used=result.tools_used))
+        self._set_state(State.SPEAKING)
 
         if reply_channel:
             await reply_channel.send(result.text)
@@ -140,6 +144,15 @@ class EdgeAgent:
                 await self.perception.inject_context(f"[Completed: {summary}]")
             except Exception:
                 log.debug("inject_context not available")
+
+        self._set_state(State.LISTENING)
+
+    def _set_state(self, new_state: str) -> None:
+        try:
+            if self.sm.state != new_state:
+                self.sm.transition(new_state)
+        except Exception:
+            log.debug("Ignored invalid state transition: %s -> %s", self.sm.state, new_state)
 
     # -- Run -------------------------------------------------------------------
 
@@ -152,6 +165,7 @@ class EdgeAgent:
         log.info("EdgeAgent v%s starting...", __version__)
 
         if self.perception is not None:
+            self._set_state(State.LISTENING)
             system_prompt = self.memory.build_system_prompt()
             await self.perception.start(system_prompt)
             log.info("System 1 (perception) started.")

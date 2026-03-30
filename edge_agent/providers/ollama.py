@@ -1,7 +1,11 @@
-"""OllamaProvider: System 2 implementation using Ollama API with ReAct loop."""
+"""OllamaProvider: System 2 implementation using Ollama API with ReAct loop.
+
+Includes automatic retry and reconnection logic for 24/7 stability.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -14,11 +18,14 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+MAX_RETRIES = 3
+RETRY_DELAY = 2.0
+
 
 class OllamaProvider:
     """
     Lightweight System 2: direct Ollama API calls with self-built ReAct loop.
-    Zero external framework dependency.
+    Zero external framework dependency. Includes retry/reconnect for stability.
     """
 
     def __init__(
@@ -29,6 +36,14 @@ class OllamaProvider:
         self.model = model
         self.base_url = base_url
         self._client = _ollama.AsyncClient(host=base_url)
+
+    async def _ensure_client(self) -> None:
+        """Recreate client if connection was lost."""
+        try:
+            await self._client.list()
+        except Exception:
+            log.info("Reconnecting to Ollama at %s...", self.base_url)
+            self._client = _ollama.AsyncClient(host=self.base_url)
 
     async def reason(
         self,
@@ -50,11 +65,9 @@ class OllamaProvider:
             if tools:
                 kwargs["tools"] = tools
 
-            try:
-                response = await self._client.chat(**kwargs)
-            except Exception:
-                log.exception("Ollama chat failed")
-                return ReasoningResult(text="Ollama call failed", tools_used=tools_used)
+            response = await self._chat_with_retry(**kwargs)
+            if response is None:
+                return ReasoningResult(text="Ollama call failed after retries", tools_used=tools_used)
 
             msg = response.message if hasattr(response, "message") else response.get("message", {})
             tool_calls = getattr(msg, "tool_calls", None)
@@ -98,12 +111,29 @@ class OllamaProvider:
             tokens_used=total_tokens,
         )
 
+    async def _chat_with_retry(self, **kwargs) -> object | None:
+        for attempt in range(MAX_RETRIES):
+            try:
+                return await self._client.chat(**kwargs)
+            except Exception as e:
+                log.warning("Ollama chat attempt %d/%d failed: %s", attempt + 1, MAX_RETRIES, e)
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                    await self._ensure_client()
+        log.error("All Ollama chat retries exhausted")
+        return None
+
     async def health(self) -> bool:
         try:
             await self._client.list()
             return True
         except Exception:
-            return False
+            try:
+                await self._ensure_client()
+                await self._client.list()
+                return True
+            except Exception:
+                return False
 
 
 def _msg_to_dict(msg) -> dict:

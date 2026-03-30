@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "edge-agent"
@@ -22,6 +22,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+memory = [
+    "sentence-transformers>=3.0",
+]
 computer = [
     "pyautogui>=0.9",
     "pillow>=10.0",
@@ -36,3 +39,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["edge_agent*"]
+
+[tool.setuptools.package-data]
+edge_agent = ["web/*.html", "web/*.css", "web/*.js"]

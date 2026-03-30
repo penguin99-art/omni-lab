@@ -20,7 +20,6 @@ import logging
 import shutil
 import tempfile
 import threading
-import time
 from pathlib import Path
 
 import httpx
@@ -77,7 +76,8 @@ class MiniCPMProvider:
 
     async def start(self, system_prompt: str) -> None:
         self._system_prompt = system_prompt
-        await self._init_model()
+        if not self._initialized:
+            await self._init_model()
         await self._update_session_config(system_prompt)
         log.info("MiniCPMProvider started. Work dir: %s", self.work_dir)
 
@@ -96,6 +96,9 @@ class MiniCPMProvider:
         log.debug("MiniCPM resumed")
 
     async def feed(self, audio_b64: str, frame_b64: str = "") -> PerceptionResult:
+        if not self._initialized:
+            await self.start(self._system_prompt or "")
+
         if self._paused:
             return PerceptionResult(text="", is_listening=True)
 
