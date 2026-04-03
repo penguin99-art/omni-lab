@@ -1,6 +1,10 @@
 # Model weights
 models/
 
+# Build artifacts & large external repos
+llama.cpp-omni/build/
+cases/llama-cpp-eval/
+
 # Benchmark raw data (regenerable)
 bench/results/
 bench/eval_results/
@@ -29,3 +33,4 @@ Thumbs.db
 .vscode/
 .idea/
 .pytest_cache/
+cases/ref/
