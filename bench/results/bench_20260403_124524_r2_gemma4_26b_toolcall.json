@@ -1,0 +1,42 @@
+[
+  {
+    "timestamp": "2026-04-03T12:45:20.416726",
+    "model_name": "gemma4:26b",
+    "engine": "ollama",
+    "arch": "moe",
+    "active_params": "4B",
+    "size_gb": 18,
+    "prompt_id": "tool_weather",
+    "prompt_type": "tool_call",
+    "output_tokens": 64,
+    "input_tokens": 94,
+    "tok_per_sec": 36.4,
+    "ttft_sec": 0.112,
+    "wall_sec": 2.07,
+    "tool_calls_count": 1,
+    "tool_call_correct": true,
+    "content_preview": "",
+    "community_toks": null,
+    "error": ""
+  },
+  {
+    "timestamp": "2026-04-03T12:45:22.485535",
+    "model_name": "gemma4:26b",
+    "engine": "ollama",
+    "arch": "moe",
+    "active_params": "4B",
+    "size_gb": 18,
+    "prompt_id": "tool_multi",
+    "prompt_type": "tool_call",
+    "output_tokens": 74,
+    "input_tokens": 139,
+    "tok_per_sec": 35.97,
+    "ttft_sec": 0.11,
+    "wall_sec": 2.35,
+    "tool_calls_count": 1,
+    "tool_call_correct": true,
+    "content_preview": "",
+    "community_toks": null,
+    "error": ""
+  }
+]

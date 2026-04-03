@@ -1,0 +1,2 @@
+timestamp,model_name,engine,arch,active_params,size_gb,prompt_id,prompt_type,output_tokens,input_tokens,tok_per_sec,ttft_sec,wall_sec,tool_calls_count,tool_call_correct,content_preview,community_toks,error
+2026-04-03T10:30:14.608213,gemma4:e2b,ollama,dense,2B,7.2,hello,chat,225,22,36.93,0.043,10.22,0,False,Hello! Here are a few ways to say hello:  *   **English:** Hello *   **Spanish:** Hola *   **French:** Bonjour,,

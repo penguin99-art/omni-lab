@@ -1,0 +1,22 @@
+[
+  {
+    "timestamp": "2026-04-03T10:30:14.608213",
+    "model_name": "gemma4:e2b",
+    "engine": "ollama",
+    "arch": "dense",
+    "active_params": "2B",
+    "size_gb": 7.2,
+    "prompt_id": "hello",
+    "prompt_type": "chat",
+    "output_tokens": 225,
+    "input_tokens": 22,
+    "tok_per_sec": 36.93,
+    "ttft_sec": 0.043,
+    "wall_sec": 10.22,
+    "tool_calls_count": 0,
+    "tool_call_correct": false,
+    "content_preview": "Hello! Here are a few ways to say hello:  *   **English:** Hello *   **Spanish:** Hola *   **French:** Bonjour",
+    "community_toks": null,
+    "error": ""
+  }
+]

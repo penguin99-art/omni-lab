@@ -1,0 +1,22 @@
+[
+  {
+    "timestamp": "2026-04-02T14:35:11.158267",
+    "model_name": "qwen3.5:9b",
+    "engine": "ollama",
+    "arch": "dense",
+    "active_params": "all",
+    "size_gb": 6.6,
+    "prompt_id": "hello",
+    "prompt_type": "chat",
+    "output_tokens": 919,
+    "input_tokens": 17,
+    "tok_per_sec": 35.81,
+    "ttft_sec": 0.055,
+    "wall_sec": 33.35,
+    "tool_calls_count": 0,
+    "tool_call_correct": false,
+    "content_preview": "Here is \"hello\" in three languages:  1.  **English:** Hello! 2.  **Spanish:** ¡Hola! 3.  **Mandarin Chinese:** 你好 (Nǐ hǎo)",
+    "community_toks": 35,
+    "error": ""
+  }
+]

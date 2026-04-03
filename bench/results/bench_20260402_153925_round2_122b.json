@@ -1,0 +1,22 @@
+[
+  {
+    "timestamp": "2026-04-02T15:34:25.162944",
+    "model_name": "qwen3.5:122b-a10b",
+    "engine": "ollama",
+    "arch": "moe",
+    "active_params": "10B",
+    "size_gb": 81,
+    "prompt_id": "hello",
+    "prompt_type": "chat",
+    "output_tokens": 0,
+    "input_tokens": 0,
+    "tok_per_sec": 0,
+    "ttft_sec": null,
+    "wall_sec": 0,
+    "tool_calls_count": 0,
+    "tool_call_correct": false,
+    "content_preview": "",
+    "community_toks": 23,
+    "error": "timed out"
+  }
+]

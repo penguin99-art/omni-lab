@@ -1,0 +1,11 @@
+timestamp,model_name,engine,arch,active_params,size_gb,prompt_id,prompt_type,output_tokens,input_tokens,tok_per_sec,ttft_sec,wall_sec,tool_calls_count,tool_call_correct,content_preview,community_toks,error
+2026-04-02T15:30:31.103726,qwen3.5:27b,ollama,dense,all,17,hello,chat,532,17,11.29,0.239,227.62,0,False,"Here is ""hello"" in three languages:  1.  **English:** Hello 2.  **Spanish:** Hola 3.  **French:** Bonjour",13,
+2026-04-02T15:34:18.724174,qwen3.5:27b,ollama,dense,all,17,reasoning,reasoning,763,41,11.28,0.244,255.74,0,False,"The farmer has **9** sheep left.  Here is the step-by-step reasoning:  1.  **Identify the total:** The farmer starts with 17 sheep. 2.  **Analyze the phrase:** The statement says ""All **but** 9 run aw",13,
+2026-04-02T15:38:34.467674,qwen3.5:27b,ollama,dense,all,17,code,code,1388,37,11.26,0.242,282.31,0,False,"```python def longest_palindromic_substring(s: str) -> str:     """"""     Find the longest palindromic substring in the given string.      A palindrome is a string that reads the same forwards and backw",13,
+2026-04-02T15:43:16.780784,qwen3.5:27b,ollama,dense,all,17,long_output,generation,0,0,0,,0,0,False,,13,timed out
+2026-04-02T15:48:16.856671,qwen3.5:27b,ollama,dense,all,17,chinese,chat,0,0,0,,0,0,False,,13,timed out
+2026-04-02T15:53:46.366956,qwen3:32b,ollama,dense,all,20,hello,chat,307,17,10.02,0.203,113.61,0,False,Hello!   ¡Hola! (Spanish)   Bonjour! (French)    Let me know if you'd like more languages! 😊,10,
+2026-04-02T15:55:39.978047,qwen3:32b,ollama,dense,all,20,reasoning,reasoning,905,41,9.95,0.205,287.98,0,False,"The farmer initially has **17 sheep**. The problem states that **""all but 9 run away""**, which means **9 sheep remain** and the rest (17 - 9 = 8) have fled.   ### Step-by-Step Reasoning: 1. **Total sh",10,
+2026-04-02T16:00:27.955148,qwen3:32b,ollama,dense,all,20,code,code,0,0,0,,0,0,False,,10,timed out
+2026-04-02T16:05:28.008701,qwen3:32b,ollama,dense,all,20,long_output,generation,0,0,0,,0,0,False,,10,timed out
+2026-04-02T16:10:28.127709,qwen3:32b,ollama,dense,all,20,chinese,chat,0,0,0,,0,0,False,,10,timed out

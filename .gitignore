@@ -5,8 +5,7 @@ models/
 llama.cpp-omni/build/
 cases/llama-cpp-eval/
 
-# Benchmark raw data (regenerable)
-bench/results/
+# Benchmark old eval data
 bench/eval_results/
 bench/eval_results_maxtoken256/
 

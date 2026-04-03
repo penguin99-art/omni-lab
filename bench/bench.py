@@ -194,7 +194,7 @@ class ModelConfig:
 
 
 MODELS = [
-    # --- Ollama models (easiest) ---
+    # --- Ollama: Qwen 3.5 ---
     ModelConfig("qwen3.5:9b", "ollama", "qwen3.5:9b", 6.6, "dense",
                 notes="Lightweight, fast", community_toks=35),
     ModelConfig("qwen3.5:35b", "ollama", "qwen3.5:35b", 23, "moe", "3B",
@@ -205,6 +205,8 @@ MODELS = [
                 notes="Largest Qwen MoE", community_toks=23, tool_call_support="partial"),
     ModelConfig("qwen3:32b", "ollama", "qwen3:32b", 20, "dense",
                 notes="Dense 32B", community_toks=10),
+
+    # --- Ollama: NVIDIA models ---
     ModelConfig("gpt-oss:120b", "ollama", "gpt-oss:120b", 65, "moe",
                 notes="NVIDIA GPT-OSS 120B MoE", community_toks=41, tool_call_support="yes"),
     ModelConfig("gpt-oss:20b", "ollama", "gpt-oss:20b", 13, "moe",
@@ -217,6 +219,36 @@ MODELS = [
                 notes="30B MoE, needs custom Modelfile. Best speed+quality ratio",
                 community_toks=72, tool_call_support="partial",
                 setup_cmd="ollama pull hf.co/mradermacher/Nemotron-Cascade-2-30B-A3B-GGUF:Q4_K_M"),
+
+    # --- Ollama: Gemma 4 E2B (2B Effective, Dense PLE) ---
+    ModelConfig("gemma4:e2b", "ollama", "gemma4:e2b", 7.2, "dense", "2B",
+                notes="Gemma4 E2B Q4_K_M default, 128K ctx", tool_call_support="unknown"),
+    ModelConfig("gemma4:e2b-q8", "ollama", "gemma4:e2b-it-q8_0", 8.1, "dense", "2B",
+                notes="Gemma4 E2B Q8_0 high precision, 128K ctx", tool_call_support="unknown"),
+    ModelConfig("gemma4:e2b-bf16", "ollama", "gemma4:e2b-it-bf16", 10, "dense", "2B",
+                notes="Gemma4 E2B BF16 full precision, 128K ctx", tool_call_support="unknown"),
+
+    # --- Ollama: Gemma 4 E4B (4B Effective, Dense PLE) ---
+    ModelConfig("gemma4:e4b", "ollama", "gemma4:e4b", 9.6, "dense", "4B",
+                notes="Gemma4 E4B Q4_K_M default, 128K ctx", tool_call_support="unknown"),
+    ModelConfig("gemma4:e4b-q8", "ollama", "gemma4:e4b-it-q8_0", 12, "dense", "4B",
+                notes="Gemma4 E4B Q8_0 high precision, 128K ctx", tool_call_support="unknown"),
+    ModelConfig("gemma4:e4b-bf16", "ollama", "gemma4:e4b-it-bf16", 16, "dense", "4B",
+                notes="Gemma4 E4B BF16 full precision, 128K ctx", tool_call_support="unknown"),
+
+    # --- Ollama: Gemma 4 26B (4B Active MoE) ---
+    ModelConfig("gemma4:26b", "ollama", "gemma4:26b", 18, "moe", "4B",
+                notes="Gemma4 26B MoE Q4_K_M, 256K ctx", tool_call_support="unknown"),
+    ModelConfig("gemma4:26b-q8", "ollama", "gemma4:26b-a4b-it-q8_0", 28, "moe", "4B",
+                notes="Gemma4 26B MoE Q8_0 high precision, 256K ctx", tool_call_support="unknown"),
+
+    # --- Ollama: Gemma 4 31B (Dense) ---
+    ModelConfig("gemma4:31b", "ollama", "gemma4:31b", 20, "dense",
+                notes="Gemma4 31B Dense Q4_K_M, 256K ctx", tool_call_support="unknown"),
+    ModelConfig("gemma4:31b-q8", "ollama", "gemma4:31b-it-q8_0", 34, "dense",
+                notes="Gemma4 31B Dense Q8_0, 256K ctx", tool_call_support="unknown"),
+    ModelConfig("gemma4:31b-bf16", "ollama", "gemma4:31b-it-bf16", 63, "dense",
+                notes="Gemma4 31B Dense BF16 full precision, 256K ctx", tool_call_support="unknown"),
 
     # --- vLLM Docker (Qwen3.5 official image) ---
     ModelConfig("qwen3.5-27b-fp8-vllm", "vllm", "Qwen/Qwen3.5-27B-FP8", 29, "dense",

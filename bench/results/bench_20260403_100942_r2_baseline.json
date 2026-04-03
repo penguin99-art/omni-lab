@@ -1,0 +1,22 @@
+[
+  {
+    "timestamp": "2026-04-03T10:09:21.776535",
+    "model_name": "qwen3.5:35b",
+    "engine": "ollama",
+    "arch": "moe",
+    "active_params": "3B",
+    "size_gb": 23,
+    "prompt_id": "hello",
+    "prompt_type": "chat",
+    "output_tokens": 682,
+    "input_tokens": 17,
+    "tok_per_sec": 56.31,
+    "ttft_sec": 0.092,
+    "wall_sec": 20.76,
+    "tool_calls_count": 0,
+    "tool_call_correct": false,
+    "content_preview": "1. **English:** Hello 2. **Spanish:** Hola 3. **Japanese:** こんにちは (Konnichiwa)",
+    "community_toks": 57,
+    "error": ""
+  }
+]

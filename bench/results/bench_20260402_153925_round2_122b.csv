@@ -1,0 +1,2 @@
+timestamp,model_name,engine,arch,active_params,size_gb,prompt_id,prompt_type,output_tokens,input_tokens,tok_per_sec,ttft_sec,wall_sec,tool_calls_count,tool_call_correct,content_preview,community_toks,error
+2026-04-02T15:34:25.162944,qwen3.5:122b-a10b,ollama,moe,10B,81,hello,chat,0,0,0,,0,0,False,,23,timed out

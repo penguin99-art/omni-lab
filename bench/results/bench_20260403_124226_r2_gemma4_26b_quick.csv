@@ -1,0 +1,2 @@
+timestamp,model_name,engine,arch,active_params,size_gb,prompt_id,prompt_type,output_tokens,input_tokens,tok_per_sec,ttft_sec,wall_sec,tool_calls_count,tool_call_correct,content_preview,community_toks,error
+2026-04-03T12:42:04.587780,gemma4:26b,ollama,moe,4B,18,hello,chat,166,22,37.61,0.083,21.61,0,False,"Hello (English), Hola (Spanish), and Bonjour (French).",,

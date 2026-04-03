@@ -1,0 +1,11 @@
+timestamp,model_name,engine,arch,active_params,size_gb,prompt_id,prompt_type,output_tokens,input_tokens,tok_per_sec,ttft_sec,wall_sec,tool_calls_count,tool_call_correct,content_preview,community_toks,error
+2026-04-02T15:30:10.860239,qwen3.5:27b,ollama,dense,all,17,hello,chat,1134,17,11.27,0.235,121.43,0,False,Here are three ways to say hello:  *   **Spanish:** Hola *   **French:** Bonjour *   **Japanese:** こんにちは (Konnichiwa),13,
+2026-04-02T15:32:12.285587,qwen3.5:27b,ollama,dense,all,17,reasoning,reasoning,1212,41,11.25,0.241,234.74,0,False,"The farmer has **9** sheep left.  Here is the step-by-step reasoning:  1.  **Identify the starting number:** The farmer starts with a total of **17** sheep. 2.  **Analyze the phrase ""All but 9"":** In ",13,
+2026-04-02T15:36:07.025847,qwen3.5:27b,ollama,dense,all,17,code,code,1134,37,11.27,0.23,248.58,0,False,"```python def longest_palindromic_substring(s: str) -> str:     """"""     Find the longest palindromic substring in the given string.      A palindrome is a string that reads the same forwards and backw",13,
+2026-04-02T15:40:15.609542,qwen3.5:27b,ollama,dense,all,17,long_output,generation,0,0,0,,0,0,False,,13,timed out
+2026-04-02T15:45:15.697459,qwen3.5:27b,ollama,dense,all,17,chinese,chat,0,0,0,,0,0,False,,13,timed out
+2026-04-02T15:53:31.330677,qwen3:32b,ollama,dense,all,20,hello,chat,387,17,10.01,0.247,54.03,0,False,"Here’s how to say ""hello"" in three languages:    1. **English**: Hello!   2. **Spanish**: ¡Hola!   3. **French**: Bonjour!    Let me know if you'd like more languages! 😊",10,
+2026-04-02T15:54:25.364909,qwen3:32b,ollama,dense,all,20,reasoning,reasoning,817,41,9.95,0.25,157.14,0,False,"The farmer has **9 sheep left**.  **Step-by-Step Explanation:**  1. **Initial Count:** The farmer starts with 17 sheep. 2. **Understanding the Phrase ""All but 9"":** This means that 9 sheep remain, and",10,
+2026-04-02T15:57:02.501139,qwen3:32b,ollama,dense,all,20,code,code,0,0,0,,0,0,False,,10,timed out
+2026-04-02T16:02:02.616597,qwen3:32b,ollama,dense,all,20,long_output,generation,0,0,0,,0,0,False,,10,timed out
+2026-04-02T16:07:02.732048,qwen3:32b,ollama,dense,all,20,chinese,chat,0,0,0,,0,0,False,,10,timed out

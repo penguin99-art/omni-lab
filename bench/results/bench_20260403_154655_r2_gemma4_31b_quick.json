@@ -1,0 +1,22 @@
+[
+  {
+    "timestamp": "2026-04-03T15:46:33.199450",
+    "model_name": "gemma4:31b",
+    "engine": "ollama",
+    "arch": "dense",
+    "active_params": "all",
+    "size_gb": 20,
+    "prompt_id": "hello",
+    "prompt_type": "chat",
+    "output_tokens": 131,
+    "input_tokens": 22,
+    "tok_per_sec": 8.53,
+    "ttft_sec": 0.195,
+    "wall_sec": 22.14,
+    "tool_calls_count": 0,
+    "tool_call_correct": false,
+    "content_preview": "Hello (English) Hola (Spanish) Bonjour (French)",
+    "community_toks": null,
+    "error": ""
+  }
+]

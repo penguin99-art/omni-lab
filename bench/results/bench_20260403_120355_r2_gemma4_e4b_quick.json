@@ -1,0 +1,22 @@
+[
+  {
+    "timestamp": "2026-04-03T12:03:41.936446",
+    "model_name": "gemma4:e4b",
+    "engine": "ollama",
+    "arch": "dense",
+    "active_params": "4B",
+    "size_gb": 9.6,
+    "prompt_id": "hello",
+    "prompt_type": "chat",
+    "output_tokens": 245,
+    "input_tokens": 22,
+    "tok_per_sec": 27.96,
+    "ttft_sec": 0.047,
+    "wall_sec": 13.34,
+    "tool_calls_count": 0,
+    "tool_call_correct": false,
+    "content_preview": "Here are three ways to say hello:  1. **Spanish:** **Hola**    *(Pronounced: Oh-la)*  2. **French:** **Bonjour**    *(Pronounced: Bon-zhoor)*  3. **Mandarin Chinese:** **Nǐ hǎo**    *(Pronounced: Nee ",
+    "community_toks": null,
+    "error": ""
+  }
+]

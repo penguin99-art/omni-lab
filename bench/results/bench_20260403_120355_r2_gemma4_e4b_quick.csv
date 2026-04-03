@@ -1,0 +1,2 @@
+timestamp,model_name,engine,arch,active_params,size_gb,prompt_id,prompt_type,output_tokens,input_tokens,tok_per_sec,ttft_sec,wall_sec,tool_calls_count,tool_call_correct,content_preview,community_toks,error
+2026-04-03T12:03:41.936446,gemma4:e4b,ollama,dense,4B,9.6,hello,chat,245,22,27.96,0.047,13.34,0,False,Here are three ways to say hello:  1. **Spanish:** **Hola**    *(Pronounced: Oh-la)*  2. **French:** **Bonjour**    *(Pronounced: Bon-zhoor)*  3. **Mandarin Chinese:** **Nǐ hǎo**    *(Pronounced: Nee ,,

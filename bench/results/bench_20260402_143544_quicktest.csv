@@ -1,0 +1,2 @@
+timestamp,model_name,engine,arch,active_params,size_gb,prompt_id,prompt_type,output_tokens,input_tokens,tok_per_sec,ttft_sec,wall_sec,tool_calls_count,tool_call_correct,content_preview,community_toks,error
+2026-04-02T14:35:11.158267,qwen3.5:9b,ollama,dense,all,6.6,hello,chat,919,17,35.81,0.055,33.35,0,False,"Here is ""hello"" in three languages:  1.  **English:** Hello! 2.  **Spanish:** ¡Hola! 3.  **Mandarin Chinese:** 你好 (Nǐ hǎo)",35,

@@ -1,0 +1,6 @@
+timestamp,model_name,engine,arch,active_params,size_gb,prompt_id,prompt_type,output_tokens,input_tokens,tok_per_sec,ttft_sec,wall_sec,tool_calls_count,tool_call_correct,content_preview,community_toks,error
+2026-04-02T16:18:26.911237,qwen3.5:122b-a10b,ollama,moe,10B,81,hello,chat,0,0,0,,0,0,False,,23,Server disconnected without sending a response.
+2026-04-02T16:24:49.725071,qwen3.5:122b-a10b,ollama,moe,10B,81,reasoning,reasoning,0,0,0,,0,0,False,,23,[Errno 111] Connection refused
+2026-04-02T16:24:49.951898,qwen3.5:122b-a10b,ollama,moe,10B,81,code,code,0,0,0,,0,0,False,,23,[Errno 111] Connection refused
+2026-04-02T16:24:49.978075,qwen3.5:122b-a10b,ollama,moe,10B,81,long_output,generation,0,0,0,,0,0,False,,23,[Errno 111] Connection refused
+2026-04-02T16:24:50.002997,qwen3.5:122b-a10b,ollama,moe,10B,81,chinese,chat,0,0,0,,0,0,False,,23,[Errno 111] Connection refused
