@@ -1,28 +1,19 @@
 # Model weights
 models/
 
-# SSL certificates (generated per-machine)
-ssl_cert.pem
-ssl_key.pem
-
-# Build artifacts
+# Build artifacts & large external repos
 llama.cpp-omni/build/
-llama.cpp-eval/
+cases/llama-cpp-eval/
 
-# Old eval/demo artifacts (kept in git history)
-eval_results/
-eval_results_maxtoken256/
-eval_*.py
-eval_*.log
-run_*.sh
-omni_*.py
-_agent_cmd_report.txt
-analyze_results.py
+# Benchmark raw data (regenerable)
+bench/results/
+bench/eval_results/
+bench/eval_results_maxtoken256/
 
-# Runtime output
-output/
+# Runtime
 *.log
 /tmp/
+output/
 
 # Python
 __pycache__/
@@ -32,10 +23,14 @@ __pycache__/
 .venv/
 venv/
 
-# OS
+# Secrets
+ssl_cert.pem
+ssl_key.pem
+
+# OS / IDE
 .DS_Store
 Thumbs.db
-
-# IDE
 .vscode/
 .idea/
+.pytest_cache/
+cases/ref/
