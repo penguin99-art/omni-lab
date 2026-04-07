@@ -1,0 +1,11 @@
+timestamp,platform_name,platform_gpu,platform_memory_gb,model_name,engine,arch,active_params,size_gb,prompt_id,prompt_type,output_tokens,input_tokens,tok_per_sec,ttft_sec,wall_sec,tool_calls_count,tool_call_correct,content_preview,community_toks,error
+2026-04-07T19:46:48.370038,dgx-spark,GB10,122,qwen3.5:9b,ollama,dense,all,6.6,hello,chat,469,17,34.17,0.056,21.08,0,False,*   **English:** Hello *   **Spanish:** Hola *   **French:** Bonjour,35,
+2026-04-07T19:47:09.453633,dgx-spark,GB10,122,qwen3.5:35b,ollama,moe,3B,23,hello,chat,1279,17,58.11,0.095,30.9,0,False,"Here is ""Hello"" in three different languages:  1. **English:** Hello 2. **Spanish:** Hola 3. **Mandarin:** Nǐ hǎo (你好)",57,
+2026-04-07T19:47:40.354651,dgx-spark,GB10,122,qwen3.5:27b,ollama,dense,all,17,hello,chat,1114,17,11.52,0.148,106.94,0,False,"Here is ""hello"" in three languages:  1.  **English:** Hello 2.  **Spanish:** Hola 3.  **French:** Bonjour",13,
+2026-04-07T19:49:27.292976,dgx-spark,GB10,122,qwen3.5:122b-a10b,ollama,moe,10B,81,hello,chat,625,17,23.81,0.176,47.58,0,False,1. **Spanish:** Hola 2. **French:** Bonjour 3. **Japanese:** こんにちは (Konnichiwa),23,
+2026-04-07T19:50:14.875395,dgx-spark,GB10,122,qwen3:32b,ollama,dense,all,20,hello,chat,319,17,9.81,0.147,38.82,0,False,Hello! Here are greetings in three languages:    1. **English**: Hello!   2. **Spanish**: ¡Hola!   3. **French**: Bonjour!    Let me know if you'd like more languages! 😊,10,
+2026-04-07T19:50:53.692861,dgx-spark,GB10,122,gpt-oss:20b,ollama,moe,all,13,hello,chat,84,74,61.06,6.343,14.43,0,False,Hello (English)   Hola (Spanish)   こんにちは (Japanese),58,
+2026-04-07T19:51:08.127523,dgx-spark,GB10,122,gemma4:e2b,ollama,dense,2B,7.2,hello,chat,262,22,109.8,0.018,10.18,0,False,Hello! Here is hello in three languages:  **English:** Hello **Spanish:** Hola **French:** Bonjour,,
+2026-04-07T19:51:18.308245,dgx-spark,GB10,122,gemma4:e4b,ollama,dense,4B,9.6,hello,chat,230,22,56.47,0.03,15.36,0,False,Hello in three languages:  1.  **Spanish:** ¡Hola! 2.  **French:** Bonjour 3.  **German:** Hallo (or Guten Tag),,
+2026-04-07T19:51:33.668673,dgx-spark,GB10,122,gemma4:26b,ollama,moe,4B,18,hello,chat,173,22,59.89,0.07,10.37,0,False,"Hello, Hola, and Bonjour.",,
+2026-04-07T19:51:44.034198,dgx-spark,GB10,122,gemma4:31b,ollama,dense,all,20,hello,chat,121,22,10.0,0.133,22.32,0,False,"Hello, Hola, Bonjour!",,

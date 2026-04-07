@@ -98,10 +98,11 @@ Step 5: Toolcall 评测
   ├── 跑 toolcall suite
   └── 验证 tool_calls 返回正确性
 
-Step 6: 结果汇总
-  ├── 数据自动保存到 results/{platform}/ (CSV + JSON)
-  ├── 跨平台结果可直接对比
-  └── 更新结果文档
+Step 6: 结果汇总 (全自动)
+  ├── CSV + JSON 原始数据 → results/{platform}/
+  ├── Markdown 报告自动生成 (排行榜 + Key Findings + 架构对比)
+  ├── 失败模型自动标记错误原因
+  └── 跨平台结果可直接对比
 ```
 
 ## 核心指标
@@ -120,18 +121,30 @@ Step 6: 结果汇总
 ```
 bench/results/
 ├── dgx-spark/                     # DGX Spark (128GB) 数据
-│   ├── bench_20260402_*.csv
-│   └── bench_20260403_*.csv
-├── jetson-agx-orin-64/            # Jetson AGX Orin 64GB 数据
-│   └── bench_*.csv
-├── mac-studio-m4-ultra/           # Mac Studio 数据
-│   └── bench_*.csv
+│   ├── bench_20260407_*.csv       #   原始数据 (CSV)
+│   ├── bench_20260407_*.json      #   结构化数据 (JSON)
+│   └── bench_20260407_*.md        #   自动生成报告 (排行榜 + 分析)
+├── jetson-agx-orin-64/            # Jetson AGX Orin 64GB
+│   └── bench_*.{csv,json,md}
+├── mac-studio-m4-ultra/           # Mac Studio
+│   └── bench_*.{csv,json,md}
 └── custom-xxx/                    # 自动检测的自定义平台
-    └── bench_*.csv
+    └── bench_*.{csv,json,md}
 ```
 
 每条结果记录包含 `platform_name`, `platform_gpu`, `platform_memory_gb` 字段，
 支持合并多平台数据进行横向对比。
+
+### 自动报告内容
+
+每次跑完自动生成 Markdown 报告，包含：
+
+1. **平台概要** — GPU、内存、带宽、CUDA 版本
+2. **排行榜** — 按 tok/s 排序，奖牌标记 (🥇🥈🥉)，含 tok/s per GB 效率指标
+3. **Key Findings** — 自动识别最快模型、最低 TTFT、最高效率、MoE vs Dense 对比
+4. **架构对比表** — MoE vs Dense 的 avg tok/s、TTFT、效率
+5. **失败模型列表** — 附错误原因 (如 Ollama 版本不兼容)
+6. **原始数据引用** — 对应 CSV/JSON 文件名
 
 ## 关键发现 (跨平台通用经验)
 

@@ -65,44 +65,50 @@ bench.py --platform auto
     ├── 3. 按内存自动过滤不兼容模型 (80% headroom)
     ├── 4. 检查哪些模型已安装可用
     ├── 5. 跑标准化测试 (相同 prompts, 相同指标)
-    └── 6. 结果保存到 results/{platform}/ 目录
+    └── 6. 自动生成报告 → results/{platform}/
+        ├── bench_YYYYMMDD_HHMMSS.csv    # 原始数据
+        ├── bench_YYYYMMDD_HHMMSS.json   # 结构化数据
+        └── bench_YYYYMMDD_HHMMSS.md     # 自动报告 (排行榜 + 分析)
 ```
 
 ---
 
 ## DGX Spark 测试结果
 
-### 速度排行榜 (Ollama Q4_K_M)
+### 速度排行榜 (Ollama Q4_K_M, 2026-04-07)
 
-| 排名 | 模型 | 架构 | 激活参数 | 大小 | tok/s | TTFT | 工具调用 |
-|------|------|------|----------|------|-------|------|---------|
-| 1 | **qwen3.5:35b** | MoE | 3B | 23GB | **55.8** | 0.09s | ✓ |
-| 2 | qwen3.5:9b | Dense | 9B | 6.6GB | 36.1 | 0.06s | - |
-| 3 | gemma4:26b | MoE | 4B | 18GB | 35.1 | 0.07s | ✓ |
-| 4 | gemma4:e2b | Dense PLE | 2B | 7.2GB | 33.9 | 0.03s | ✓ |
-| 5 | gemma4:e4b | Dense PLE | 4B | 9.6GB | 25.9 | 0.05s | ✓ |
-| 6 | qwen3.5:27b | Dense | 27B | 17GB | 11.3 | 0.24s | - |
-| 7 | qwen3:32b | Dense | 32B | 20GB | 10.0 | 0.25s | - |
-| 8 | gemma4:31b | Dense | 31B | 20GB | 8.1 | 0.17s | ✓ |
+| 排名 | 模型 | 架构 | 激活参数 | 大小 | tok/s | TTFT | tok/s/GB |
+|------|------|------|----------|------|-------|------|----------|
+| 1 | **gemma4:e2b** | Dense | 2B | 7GB | **109.8** | 0.02s | 15.2 |
+| 2 | gpt-oss:20b | MoE | all | 13GB | 61.1 | 6.34s | 4.7 |
+| 3 | gemma4:26b | MoE | 4B | 18GB | 59.9 | 0.07s | 3.3 |
+| 4 | **qwen3.5:35b** | MoE | 3B | 23GB | **58.1** | 0.10s | 2.5 |
+| 5 | gemma4:e4b | Dense | 4B | 10GB | 56.5 | 0.03s | 5.9 |
+| 6 | qwen3.5:9b | Dense | 9B | 7GB | 34.2 | 0.06s | 5.2 |
+| 7 | qwen3.5:122b-a10b | MoE | 10B | 81GB | 23.8 | 0.18s | 0.3 |
+| 8 | qwen3.5:27b | Dense | 27B | 17GB | 11.5 | 0.15s | 0.7 |
+| 9 | gemma4:31b | Dense | 31B | 20GB | 10.0 | 0.13s | 0.5 |
+| 10 | qwen3:32b | Dense | 32B | 20GB | 9.8 | 0.15s | 0.5 |
 
 ### 推荐配置 (DGX Spark 128GB)
 
 | 场景 | 推荐模型 | tok/s | 内存 | 理由 |
 |------|----------|-------|------|------|
-| 日常助手 (速度优先) | qwen3.5:35b | 55.8 | 23GB | 绝对最快 |
-| Agent / 工具调用 | gemma4:26b | 35.1 | 18GB | TTFT 快 2-3x |
-| 轻量嵌入 / 并发 | gemma4:e2b | 33.9 | 7.2GB | 仅 7GB，效率最高 |
-| 多模态 (视觉+音频) | gemma4:e4b / 26b | 26-35 | 10-18GB | Gemma4 原生支持 |
-| 最大开源模型 | MiniMax M2.5 | ~26 | 101GB | 229B 总参 |
+| 速度+效率冠军 | gemma4:e2b | 109.8 | 7GB | 15.2 tok/s/GB，最高效率 |
+| 日常助手 (质量优先) | qwen3.5:35b | 58.1 | 23GB | MoE 高速 + 长输出 |
+| Agent / 工具调用 | gemma4:26b | 59.9 | 18GB | TTFT 0.07s，MoE 高效 |
+| 轻量嵌入 / 并发 | gemma4:e2b | 109.8 | 7GB | 仅 7GB，可多实例并行 |
+| 多模态 (视觉+音频) | gemma4:e4b / 26b | 57-60 | 10-18GB | Gemma4 原生支持 |
+| 最大开源模型 | qwen3.5:122b-a10b | 23.8 | 81GB | 1220 亿参数 MoE |
 
 ---
 
 ## 核心发现
 
-1. **MoE 是带宽受限平台的甜点架构。** 内存带宽是瓶颈，MoE 只激活少量参数 → 比同级 Dense 模型快 **5-7 倍**
-2. **Q4_K_M 是最佳量化。** 更高精度反而更慢 (模型更大 → 带宽压力更大)
-3. **tok/s ≠ 用户体感。** Thinking 模型生成大量不可见 token，端到端未必最快
-4. **Gemma 4 全系列支持工具调用。** 5 个模型全部通过原生 `tools` API 测试
+1. **gemma4:e2b 效率惊人。** 109.8 tok/s，仅 7GB，效率达 15.2 tok/s/GB — 所有模型中最高
+2. **MoE 是带宽受限平台的甜点架构。** MoE 均值 50.7 tok/s vs Dense 38.6 tok/s，领先 31%
+3. **Q4_K_M 是最佳量化。** 更高精度反而更慢 (模型更大 → 带宽压力更大)
+4. **Ollama 版本很重要。** Gemma 4 需要 Ollama 0.20+，旧版本会静默返回空结果
 5. **统一内存架构需要 `--no-mmap`。** Spark/Orin 等统一内存平台使用 llama.cpp 必须禁用 mmap
 
 ---
@@ -157,8 +163,8 @@ python3 bench/bench.py --suite quick   # 跑起来
 │   ├── setup_models.sh             #   模型下载 & 引擎环境搭建
 │   ├── start_vllm_fp8.sh           #   vLLM FP8 容器启动
 │   ├── PLAN.md                     #   测试方法论
-│   └── results/                    #   原始数据 (按平台分目录)
-│       ├── dgx-spark/              #     DGX Spark 数据
+│   └── results/                    #   原始数据 + 自动报告 (按平台分目录)
+│       ├── dgx-spark/              #     DGX Spark (CSV + JSON + MD 报告)
 │       └── {platform}/             #     其他平台数据
 │
 ├── cases/                          # 过往实验

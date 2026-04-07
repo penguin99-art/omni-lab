@@ -484,10 +484,11 @@ def get_ollama_base_url():
     return os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
 
-def check_ollama_model(model_id: str) -> bool:
+def check_ollama_model(model_id: str, base_url: str = "") -> bool:
     """Check if model is available in Ollama."""
+    url = base_url or get_ollama_base_url()
     try:
-        r = httpx.get(f"{get_ollama_base_url()}/api/tags", timeout=5)
+        r = httpx.get(f"{url}/api/tags", timeout=5)
         models = [m["name"] for m in r.json().get("models", [])]
         return any(model_id in m for m in models)
     except Exception:
@@ -505,8 +506,9 @@ def check_openai_endpoint(base_url: str, model_id: str) -> bool:
 
 
 def call_ollama(model_id: str, messages: list, tools: list | None = None,
-                timeout: float = 600) -> dict:
+                timeout: float = 600, base_url: str = "") -> dict:
     """Call Ollama chat API and return timing + response info."""
+    url = base_url or get_ollama_base_url()
     payload = {
         "model": model_id,
         "messages": messages,
@@ -517,12 +519,15 @@ def call_ollama(model_id: str, messages: list, tools: list | None = None,
 
     t0 = time.perf_counter()
     r = httpx.post(
-        f"{get_ollama_base_url()}/api/chat",
+        f"{url}/api/chat",
         json=payload,
         timeout=timeout,
     )
     wall_time = time.perf_counter() - t0
     data = r.json()
+
+    if "error" in data:
+        raise RuntimeError(f"ollama: {data['error']}")
 
     content = data.get("message", {}).get("content", "")
     tool_calls = data.get("message", {}).get("tool_calls", [])
@@ -567,6 +572,9 @@ def call_openai_compat(base_url: str, model_id: str, messages: list,
     )
     wall_time = time.perf_counter() - t0
     data = r.json()
+
+    if "error" in data:
+        raise RuntimeError(f"api: {data['error']}")
 
     choice = data.get("choices", [{}])[0]
     msg = choice.get("message", {})
@@ -628,6 +636,7 @@ def run_single(model: ModelConfig, prompt: dict, plat: Platform) -> BenchResult:
                 model.model_id,
                 prompt["messages"],
                 tools=prompt.get("tools"),
+                base_url=model.base_url,
             )
         else:
             result = call_openai_compat(
@@ -698,7 +707,7 @@ def get_memory_usage() -> dict:
 
 def is_model_available(model: ModelConfig) -> bool:
     if model.engine == "ollama":
-        return check_ollama_model(model.model_id)
+        return check_ollama_model(model.model_id, model.base_url)
     else:
         return check_openai_endpoint(model.base_url, model.model_id)
 
@@ -724,7 +733,7 @@ def print_table(results: list[BenchResult]):
 
 
 def save_results(results: list[BenchResult], plat: Platform, tag: str = ""):
-    """Save results to CSV and JSON under results/{platform}/."""
+    """Save results to CSV, JSON, and Markdown report under results/{platform}/."""
     plat_dir = RESULTS_DIR / plat.name
     plat_dir.mkdir(parents=True, exist_ok=True)
 
@@ -733,6 +742,7 @@ def save_results(results: list[BenchResult], plat: Platform, tag: str = ""):
 
     csv_path = plat_dir / f"{stem}.csv"
     json_path = plat_dir / f"{stem}.json"
+    report_path = plat_dir / f"{stem}.md"
 
     if results:
         with open(csv_path, "w", newline="") as f:
@@ -744,7 +754,124 @@ def save_results(results: list[BenchResult], plat: Platform, tag: str = ""):
         with open(json_path, "w") as f:
             json.dump([asdict(r) for r in results], f, indent=2, ensure_ascii=False)
 
-        print(f"\nResults saved to:\n  {csv_path}\n  {json_path}")
+        _generate_report(results, plat, report_path, stem)
+
+        print(f"\nResults saved to:\n  {csv_path}\n  {json_path}\n  {report_path}")
+
+
+def _generate_report(results: list[BenchResult], plat: Platform,
+                     path: Path, stem: str):
+    """Generate a Markdown benchmark report."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ok = [r for r in results if r.output_tokens > 0 and not r.error]
+    failed = [r for r in results if r.output_tokens == 0 or r.error]
+
+    prompt_ids = list(dict.fromkeys(r.prompt_id for r in results))
+    suites_used = ", ".join(prompt_ids)
+
+    lines = [
+        f"# Benchmark Report — {plat.name}",
+        f"",
+        f"> Generated: {now}  ",
+        f"> Platform: **{plat.gpu}** | {plat.memory_gb}GB | {plat.bandwidth_gbps} GB/s | CUDA {plat.cuda_version}  ",
+        f"> Test suite: {suites_used} ({len(prompt_ids)} prompt{'s' if len(prompt_ids)>1 else ''})  ",
+        f"> Models tested: {len(set(r.model_name for r in results))} | "
+        f"Succeeded: {len(ok)} | Failed: {len(failed)}",
+        f"",
+    ]
+
+    for pid in prompt_ids:
+        pid_results = [r for r in ok if r.prompt_id == pid]
+        if not pid_results:
+            continue
+
+        ranked = sorted(pid_results, key=lambda r: r.tok_per_sec, reverse=True)
+
+        lines.append(f"## Prompt: `{pid}`")
+        lines.append("")
+        lines.append("| # | Model | Engine | Arch | Size | tok/s | TTFT | Wall | Tokens | tok/s per GB |")
+        lines.append("|---|-------|--------|------|------|------:|-----:|-----:|-------:|-------------:|")
+
+        for i, r in enumerate(ranked, 1):
+            ttft = f"{r.ttft_sec:.2f}s" if r.ttft_sec else "-"
+            tpg = r.tok_per_sec / r.size_gb if r.size_gb > 0 else 0
+            medal = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{i}"))
+            lines.append(
+                f"| {medal} | {r.model_name} | {r.engine} | {r.arch} "
+                f"| {r.size_gb:.0f}GB | **{r.tok_per_sec:.1f}** | {ttft} "
+                f"| {r.wall_sec:.1f}s | {r.output_tokens} | {tpg:.1f} |"
+            )
+        lines.append("")
+
+    # Key findings
+    if ok:
+        lines.append("## Key Findings")
+        lines.append("")
+
+        fastest = max(ok, key=lambda r: r.tok_per_sec)
+        lines.append(f"- **Fastest**: {fastest.model_name} @ **{fastest.tok_per_sec:.1f} tok/s**")
+
+        ttft_results = [r for r in ok if r.ttft_sec is not None and r.ttft_sec > 0]
+        if ttft_results:
+            best_ttft = min(ttft_results, key=lambda r: r.ttft_sec)
+            lines.append(f"- **Best TTFT**: {best_ttft.model_name} @ **{best_ttft.ttft_sec:.3f}s**")
+
+        best_eff = max(ok, key=lambda r: r.tok_per_sec / r.size_gb if r.size_gb > 0 else 0)
+        eff_val = best_eff.tok_per_sec / best_eff.size_gb if best_eff.size_gb > 0 else 0
+        lines.append(f"- **Best efficiency** (tok/s per GB): {best_eff.model_name} "
+                      f"@ **{eff_val:.1f} tok/s/GB**")
+
+        moe = [r for r in ok if r.arch == "moe"]
+        dense = [r for r in ok if r.arch == "dense"]
+        if moe and dense:
+            avg_moe = sum(r.tok_per_sec for r in moe) / len(moe)
+            avg_dense = sum(r.tok_per_sec for r in dense) / len(dense)
+            lines.append(f"- **MoE avg**: {avg_moe:.1f} tok/s vs **Dense avg**: {avg_dense:.1f} tok/s "
+                          f"({'MoE' if avg_moe > avg_dense else 'Dense'} wins by "
+                          f"{abs(avg_moe - avg_dense) / min(avg_moe, avg_dense) * 100:.0f}%)")
+
+        lines.append("")
+
+    # MoE vs Dense breakdown
+    moe_ok = [r for r in ok if r.arch == "moe"]
+    dense_ok = [r for r in ok if r.arch == "dense"]
+    if moe_ok and dense_ok:
+        lines.append("## Architecture Comparison")
+        lines.append("")
+        lines.append("| Metric | MoE | Dense |")
+        lines.append("|--------|----:|------:|")
+        avg_moe_tok = sum(r.tok_per_sec for r in moe_ok) / len(moe_ok)
+        avg_dense_tok = sum(r.tok_per_sec for r in dense_ok) / len(dense_ok)
+        lines.append(f"| Avg tok/s | {avg_moe_tok:.1f} | {avg_dense_tok:.1f} |")
+        moe_ttft = [r for r in moe_ok if r.ttft_sec]
+        dense_ttft = [r for r in dense_ok if r.ttft_sec]
+        if moe_ttft and dense_ttft:
+            avg_moe_t = sum(r.ttft_sec for r in moe_ttft) / len(moe_ttft)
+            avg_dense_t = sum(r.ttft_sec for r in dense_ttft) / len(dense_ttft)
+            lines.append(f"| Avg TTFT | {avg_moe_t:.3f}s | {avg_dense_t:.3f}s |")
+        avg_moe_eff = sum(r.tok_per_sec / r.size_gb for r in moe_ok if r.size_gb > 0) / len(moe_ok)
+        avg_dense_eff = sum(r.tok_per_sec / r.size_gb for r in dense_ok if r.size_gb > 0) / len(dense_ok)
+        lines.append(f"| Avg tok/s/GB | {avg_moe_eff:.1f} | {avg_dense_eff:.1f} |")
+        lines.append(f"| Count | {len(moe_ok)} | {len(dense_ok)} |")
+        lines.append("")
+
+    # Failed models
+    if failed:
+        lines.append("## Failed Models")
+        lines.append("")
+        for r in failed:
+            reason = r.error if r.error else "0 tokens returned"
+            lines.append(f"- **{r.model_name}** ({r.engine}): {reason}")
+        lines.append("")
+
+    # Raw data reference
+    lines.append("## Raw Data")
+    lines.append("")
+    lines.append(f"- CSV: `{stem}.csv`")
+    lines.append(f"- JSON: `{stem}.json`")
+    lines.append("")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -863,6 +990,8 @@ def main():
             results.append(result)
             if result.error:
                 print(f"ERROR: {result.error[:80]}")
+            elif result.output_tokens == 0:
+                print(f"⚠ 0 tokens ({result.wall_sec:.1f}s) — model may have failed silently")
             else:
                 print(f"{result.tok_per_sec:.1f} tok/s, {result.wall_sec:.1f}s, "
                       f"{result.output_tokens} tokens")
