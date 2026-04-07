@@ -1,0 +1,57 @@
+[
+  {
+    "ttft_sec": 9.8929,
+    "wall_sec": 13.78,
+    "output_tokens": 333,
+    "content_preview": "Hello! I'm an AI assistant specialized in software engineering, here to help you with your DGX Spark",
+    "engine": "ollama",
+    "round": 1,
+    "user_msg": "Hello, who are you?",
+    "is_repeat": false,
+    "system_prompt_len": 1732
+  },
+  {
+    "ttft_sec": 3.9527,
+    "wall_sec": 36.22,
+    "output_tokens": 2026,
+    "content_preview": "I'll write a comprehensive Python solution for finding the longest palindromic substring with multip",
+    "engine": "ollama",
+    "round": 2,
+    "user_msg": "Write a Python function to find the longest palind",
+    "is_repeat": false,
+    "system_prompt_len": 1732
+  },
+  {
+    "ttft_sec": 2.6199,
+    "wall_sec": 19.72,
+    "output_tokens": 1094,
+    "content_preview": "# MoE vs Dense Model Architectures  ## Overview  ### Dense Models In **Dense** (traditional) archite",
+    "engine": "ollama",
+    "round": 3,
+    "user_msg": "Explain the difference between MoE and Dense model",
+    "is_repeat": false,
+    "system_prompt_len": 1732
+  },
+  {
+    "ttft_sec": 1.2984,
+    "wall_sec": 2.02,
+    "output_tokens": 87,
+    "content_preview": "I'll check the current git status of this project for you.",
+    "engine": "ollama",
+    "round": 4,
+    "user_msg": "What is the current git status of this project?",
+    "is_repeat": false,
+    "system_prompt_len": 1732
+  },
+  {
+    "ttft_sec": 2.4525,
+    "wall_sec": 5.91,
+    "output_tokens": 312,
+    "content_preview": "Hello! I'm an AI assistant specialized in software engineering. I have deep expertise in several pro",
+    "engine": "ollama",
+    "round": 5,
+    "user_msg": "Hello, who are you?",
+    "is_repeat": true,
+    "system_prompt_len": 1732
+  }
+]

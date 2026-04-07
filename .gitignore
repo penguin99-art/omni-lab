@@ -1,18 +1,19 @@
-# Model weights
+# Model weights (keep locally, never commit)
 models/
 
 # Build artifacts & large external repos
 llama.cpp-omni/build/
 cases/llama-cpp-eval/
 
-# Benchmark old eval data
+# Benchmark old eval data (superseded by bench/results/)
 bench/eval_results/
 bench/eval_results_maxtoken256/
 
-# Runtime
+# Runtime / temp
 *.log
 /tmp/
 output/
+_*.txt
 
 # Python
 __pycache__/
@@ -21,6 +22,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+vllm/
 
 # Secrets
 ssl_cert.pem
