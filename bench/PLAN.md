@@ -1,27 +1,36 @@
-# DGX Spark 大模型测试方法论
+# GPU Model Bench — 测试方法论
 
-## 硬件环境
+跨平台标准化大模型评测方法论。同一套测试在不同算力平台上产出可对比的结果。
 
-| 项目 | 值 |
-|------|-----|
-| GPU | NVIDIA GB10 (SM 12.1 Blackwell) |
-| 统一内存 | 128GB LPDDR5x (~273 GB/s) |
-| 算力峰值 | 1 PFLOP (FP4) |
-| CUDA | 13.0 |
-| 磁盘 | 3.7TB NVMe |
-| OS | Ubuntu 24.04 (DGX OS, aarch64) |
+## 支持平台
+
+| 平台 | GPU | 内存 | 带宽 | CUDA | 最大模型 (Q4) |
+|------|-----|------|------|------|--------------|
+| **DGX Spark** | GB10 | 128GB | 273 GB/s | 13.0 | ~102GB |
+| Jetson AGX Orin 64 | Orin | 64GB | 204 GB/s | 12.6 | ~51GB |
+| Jetson AGX Orin 32 | Orin | 32GB | 204 GB/s | 12.6 | ~25GB |
+| Jetson Orin NX 16 | Orin NX | 16GB | 102 GB/s | 12.6 | ~12GB |
+| Jetson Orin Nano 8 | Orin Nano | 8GB | 68 GB/s | 12.6 | ~6GB |
+| Mac Studio M4 Max | M4 Max | 128GB | 546 GB/s | Metal | ~102GB |
+| Mac Studio M4 Ultra | M4 Ultra | 192GB | 800 GB/s | Metal | ~153GB |
+| RTX 4090 | RTX 4090 | 24GB | 1008 GB/s | 12.x | ~19GB |
+| RTX 5090 | RTX 5090 | 32GB | 1792 GB/s | 12.8 | ~25GB |
+
+平台通过 `--platform auto` 自动检测，或 `--platform <name>` 手动指定。
+添加新平台只需在 `bench.py` 的 `KNOWN_PLATFORMS` 字典中添加一项。
 
 ## 测试引擎
 
 | 引擎 | 安装方式 | 特点 | 适用场景 |
 |------|---------|------|---------|
 | **Ollama** | 预装 / 手动升级 | 开箱即用，GGUF 量化 | 快速评估、Q4_K_M/Q8_0 |
-| **vLLM** (cu130-nightly) | Docker | OpenAI API，prefix caching | FP8 推理、TTFT 优化 |
-| **vLLM** + namake-taro | pip + patch | MXFP4/NVFP4 量化 | 极限性能 |
-| **llama.cpp** | Docker 编译 | SM 12.1 原生支持 | 超大模型 (200B+) |
-| **SGLang** (spark) | Docker | LMSYS 出品 | 部分模型最优 |
+| **vLLM** | Docker / pip | OpenAI API，prefix caching | FP8 推理、TTFT 优化 |
+| **llama.cpp** | Docker 编译 | 全平台支持 | 超大模型、边缘设备 |
+| **SGLang** | Docker | LMSYS 出品 | 部分模型最优 |
 
 ## 测试套件
+
+所有套件**跨平台完全一致** — 同样的 prompts、同样的指标、同样的评判标准。
 
 ### quick — 快速筛选 (1 prompt)
 
@@ -35,7 +44,7 @@ python3 bench/bench.py --models "模型名" --suite quick
 
 | Prompt ID | 测试维度 | 内容 |
 |-----------|---------|------|
-| hello | 基础对话 | "Hello, who are you?" |
+| hello | 基础对话 | "Say hello in 3 languages." |
 | reasoning | 逻辑推理 | "17只羊死了9只还剩几只" (答案: 9) |
 | code | 代码生成 | 最长回文子串函数 |
 | long_output | 长文生成 | 500 词科技文章 |
@@ -58,31 +67,40 @@ python3 bench/bench.py --models "模型名" --suite standard
 python3 bench/bench.py --models "模型名" --suite toolcall
 ```
 
-## 测试流程
+## 标准测试流程
 
 ```
+Step 0: 平台检测
+  └── bench.py --platform auto 自动识别 GPU/内存/CUDA
+      或 --platform <name> 手动指定
+
 Step 1: 环境准备
   ├── 确认 Ollama 版本 (ollama --version)
   ├── 确认目标模型已拉取 (ollama list)
   └── 如需 vLLM: 启动容器或安装环境
 
-Step 2: Quick 筛选
+Step 2: 模型筛选
+  ├── bench.py 自动过滤超出平台内存的模型
+  ├── --list 查看兼容模型列表
+  └── 选择目标模型 (或测所有已装)
+
+Step 3: Quick 量化筛选
   ├── 同一模型不同量化版本跑 quick suite
   ├── 对比 tok/s 和内存占用
   └── 选出最佳量化版本
 
-Step 3: Standard 深度评测
+Step 4: Standard 深度评测
   ├── 选定的模型跑 standard suite
   ├── 记录 5 维度数据: tok/s, TTFT, wall_sec, output_tokens, 内容质量
   └── 同时跑一个已知基准模型作为对照组
 
-Step 4: Toolcall 评测
+Step 5: Toolcall 评测
   ├── 跑 toolcall suite
   └── 验证 tool_calls 返回正确性
 
-Step 5: 结果汇总
-  ├── 数据自动保存到 bench/results/ (CSV + JSON)
-  ├── 生成排行榜和对比分析
+Step 6: 结果汇总
+  ├── 数据自动保存到 results/{platform}/ (CSV + JSON)
+  ├── 跨平台结果可直接对比
   └── 更新结果文档
 ```
 
@@ -97,50 +115,64 @@ Step 5: 结果汇总
 | **tok/s per GB** | 内存效率 | tok/s ÷ 模型大小 |
 | **tool_call_correct** | 工具调用正确率 | API 返回的 tool_calls 结构是否正确 |
 
-## 关键发现 (经验法则)
+## 结果目录结构
 
-1. **MoE 是 Spark 的甜点架构。** 内存带宽 273 GB/s 是瓶颈，MoE 只激活少量参数 → 5-7 倍加速
+```
+bench/results/
+├── dgx-spark/                     # DGX Spark (128GB) 数据
+│   ├── bench_20260402_*.csv
+│   └── bench_20260403_*.csv
+├── jetson-agx-orin-64/            # Jetson AGX Orin 64GB 数据
+│   └── bench_*.csv
+├── mac-studio-m4-ultra/           # Mac Studio 数据
+│   └── bench_*.csv
+└── custom-xxx/                    # 自动检测的自定义平台
+    └── bench_*.csv
+```
+
+每条结果记录包含 `platform_name`, `platform_gpu`, `platform_memory_gb` 字段，
+支持合并多平台数据进行横向对比。
+
+## 关键发现 (跨平台通用经验)
+
+1. **MoE 是带宽受限平台的甜点架构。** 内存带宽是瓶颈时，MoE 只激活少量参数 → 5-7 倍加速
 2. **Q4_K_M 是最佳量化。** 更高精度反而更慢 (模型更大 → 带宽压力更大)
-3. **tok/s ≠ 用户体感。** Thinking 模型 (Qwen3.5) tok/s 高但包含不可见 thinking tokens，端到端可能更慢
-4. **TTFT 差异巨大。** Gemma4 无 thinking 开销 → TTFT 比 Qwen3.5 快 2-3 倍
-5. **统一内存需要 `--no-mmap`。** llama.cpp 在 Spark 上必须禁用 mmap 否则性能崩溃
+3. **tok/s ≠ 用户体感。** Thinking 模型 tok/s 高但包含不可见 thinking tokens
+4. **TTFT 差异巨大。** 无 thinking 开销的模型首 token 更快
+5. **统一内存需要 `--no-mmap`。** Spark/Orin/Mac 等统一内存平台使用 llama.cpp 必须禁用 mmap
 
-## 模型矩阵
+## 添加新平台
 
-### 已验证 (Ollama Q4_K_M)
+在 `bench.py` 的 `KNOWN_PLATFORMS` 字典中添加:
 
-| 模型 | 总参数 | 激活参数 | 大小 | 架构 | tok/s | 工具调用 |
-|------|--------|----------|------|------|-------|---------|
-| qwen3.5:35b | 35B | 3B | 23GB | MoE | 55.8 | ✓ |
-| gemma4:26b | 26B | 4B | 18GB | MoE | 35.1 | ✓ |
-| gemma4:e2b | ~2B | 2B | 7.2GB | Dense PLE | 33.9 | ✓ |
-| gemma4:e4b | ~4B | 4B | 9.6GB | Dense PLE | 25.9 | ✓ |
-| gemma4:31b | 31B | 31B | 20GB | Dense | 8.1 | ✓ |
-| qwen3.5:9b | 9B | 9B | 6.6GB | Dense | 36.1 | - |
-| qwen3.5:27b | 27B | 27B | 17GB | Dense | 11.3 | - |
-| qwen3:32b | 32B | 32B | 20GB | Dense | 10.0 | - |
+```python
+"my-platform": Platform(
+    name="my-platform",
+    gpu="GPU Name",
+    gpu_arch="sm_xxx",
+    memory_gb=64,
+    bandwidth_gbps=200,
+    cuda_version="12.x",
+    cpu="CPU Name",
+    os_info="OS arch",
+),
+```
 
-### 待验证
-
-| 模型 | 引擎 | 社区预期 | 关注点 |
-|------|------|----------|--------|
-| nemotron-cascade-2 | Ollama | ~72 tok/s | MoE 3B, 可能是最快模型 |
-| gpt-oss:120b | Ollama/vLLM | 41-81 tok/s | 工具调用精度高 |
-| Qwen3.5-35B-FP8 | vLLM Docker | ~47 tok/s | prefix caching → TTFT 优化 |
-| MiniMax M2.5 | llama.cpp | ~26 tok/s | 229B 总参数, Spark 上最大模型 |
+或直接使用 `--platform auto`，系统会自动生成 custom profile。
 
 ## 文件说明
 
 ```
 bench/
-├── PLAN.md                        # 本文件：测试方法论
-├── bench.py                       # 自动化 benchmark 脚本
-├── setup_models.sh                # 模型下载和引擎环境搭建
-├── ttft_compare.py                # TTFT 对比测试 (Ollama vs vLLM)
-├── start_vllm_fp8.sh              # vLLM FP8 容器启动脚本
-├── RESULTS.md                     # Round 1 结果 (Qwen 系列)
-├── RESULTS_R2.md                  # Round 2 结果 (Gemma 4 vs Qwen)
-├── COMPARE_gemma4_26b_vs_qwen35.md # gemma4:26b vs qwen3.5:35b 深度对比
-├── TEST_PLAN_R2.md                # Round 2 测试计划 (已完成, 留档)
-└── results/                       # 原始数据 (CSV + JSON, 自动生成)
+├── PLAN.md                         # 本文件：测试方法论
+├── bench.py                        # 核心: 平台检测 + 标准化 benchmark
+├── setup_models.sh                 # 模型下载和引擎环境搭建
+├── ttft_compare.py                 # TTFT 对比测试 (Ollama vs vLLM)
+├── start_vllm_fp8.sh               # vLLM FP8 容器启动脚本
+├── RESULTS.md                      # DGX Spark Round 1 结果
+├── RESULTS_R2.md                   # DGX Spark Round 2 结果
+├── COMPARE_gemma4_26b_vs_qwen35.md # 深度对比报告
+├── TEST_PLAN_R2.md                 # Round 2 计划 (留档)
+└── results/                        # 原始数据 (按平台分目录)
+    └── {platform}/                 #   CSV + JSON
 ```

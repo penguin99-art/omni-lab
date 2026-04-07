@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """
-DGX Spark LLM Benchmark Suite
+GPU Model Bench — Standardized LLM benchmark for any compute platform.
 
-Systematic benchmark for local LLMs on DGX Spark (GB10, 128GB).
-Tests models across Ollama / vLLM / SGLang with standardized prompts.
+Auto-detects hardware (DGX Spark, Jetson Orin, Mac Studio, etc.),
+filters compatible models by memory, and produces cross-platform
+comparable results.
 
 Usage:
-    python bench/bench.py                    # run all available models
-    python bench/bench.py --models qwen3.5:9b nemotron-3-nano
-    python bench/bench.py --engines ollama   # only test Ollama models
-    python bench/bench.py --suite quick      # short prompts only
-    python bench/bench.py --list             # list all configured models
+    python bench/bench.py --list                        # list models for detected platform
+    python bench/bench.py --platform auto --suite quick  # auto-detect & run
+    python bench/bench.py --models qwen3.5:35b           # test specific model
+    python bench/bench.py --engines ollama --suite standard
+    python bench/bench.py --platform jetson-orin-64 --list
 """
 
 import argparse
 import csv
 import json
 import os
+import platform as platform_mod
+import re
 import subprocess
 import sys
 import time
@@ -29,6 +32,205 @@ import httpx
 
 RESULTS_DIR = Path(__file__).parent / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Platform detection
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Platform:
+    name: str               # "dgx-spark", "jetson-orin-64", "custom-xyz"
+    gpu: str                # "GB10", "Orin", "M4 Ultra"
+    gpu_arch: str           # "sm_121", "sm_87", "apple_m4"
+    memory_gb: int          # total usable memory (unified or VRAM+RAM)
+    bandwidth_gbps: float   # memory bandwidth in GB/s
+    cuda_version: str       # "13.0", "12.6", "metal", "unknown"
+    cpu: str                # "Grace ARM64", "ARM Cortex-A78AE"
+    os_info: str            # "Ubuntu 24.04 aarch64"
+
+    def summary(self) -> str:
+        return f"{self.name} ({self.gpu}, {self.memory_gb}GB, {self.bandwidth_gbps} GB/s, CUDA {self.cuda_version})"
+
+    def max_model_gb(self) -> float:
+        """Max model size allowing ~20% headroom for KV cache and runtime."""
+        return self.memory_gb * 0.80
+
+    @classmethod
+    def from_name(cls, name: str) -> "Platform":
+        if name not in KNOWN_PLATFORMS:
+            avail = ", ".join(sorted(KNOWN_PLATFORMS.keys()))
+            raise ValueError(f"Unknown platform '{name}'. Known: {avail}")
+        return KNOWN_PLATFORMS[name]
+
+    @classmethod
+    def detect(cls) -> "Platform":
+        """Auto-detect hardware and match to a known profile or build a custom one."""
+        gpu_name = _detect_gpu_name()
+        memory_gb = _detect_total_memory_gb()
+        cuda_ver = _detect_cuda_version()
+        gpu_arch = _detect_gpu_arch()
+        cpu_info = _detect_cpu()
+        os_info = f"{platform_mod.system()} {platform_mod.release()} {platform_mod.machine()}"
+
+        for p in KNOWN_PLATFORMS.values():
+            if p.gpu.lower() in gpu_name.lower():
+                return cls(
+                    name=p.name, gpu=p.gpu, gpu_arch=p.gpu_arch,
+                    memory_gb=memory_gb or p.memory_gb,
+                    bandwidth_gbps=p.bandwidth_gbps,
+                    cuda_version=cuda_ver or p.cuda_version,
+                    cpu=cpu_info or p.cpu, os_info=os_info,
+                )
+
+        return cls(
+            name=f"custom-{gpu_name.lower().replace(' ', '-')[:20]}",
+            gpu=gpu_name or "unknown",
+            gpu_arch=gpu_arch or "unknown",
+            memory_gb=memory_gb or 16,
+            bandwidth_gbps=0,
+            cuda_version=cuda_ver or "unknown",
+            cpu=cpu_info or "unknown",
+            os_info=os_info,
+        )
+
+
+def _detect_gpu_name() -> str:
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            text=True, timeout=5, stderr=subprocess.DEVNULL,
+        ).strip().split("\n")[0]
+        return out
+    except Exception:
+        if platform_mod.system() == "Darwin":
+            try:
+                out = subprocess.check_output(
+                    ["sysctl", "-n", "machdep.cpu.brand_string"],
+                    text=True, timeout=5,
+                ).strip()
+                return out
+            except Exception:
+                pass
+        return "unknown"
+
+
+def _detect_total_memory_gb() -> int:
+    try:
+        import psutil
+        return round(psutil.virtual_memory().total / (1024**3))
+    except ImportError:
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        kb = int(line.split()[1])
+                        return round(kb / (1024**2))
+        except Exception:
+            pass
+    return 0
+
+
+def _detect_cuda_version() -> str:
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+            text=True, timeout=5, stderr=subprocess.DEVNULL,
+        ).strip()
+        return out.split("\n")[0]
+    except Exception:
+        pass
+    try:
+        out = subprocess.check_output(
+            ["nvcc", "--version"], text=True, timeout=5, stderr=subprocess.DEVNULL,
+        )
+        m = re.search(r"release (\d+\.\d+)", out)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    return ""
+
+
+def _detect_gpu_arch() -> str:
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
+            text=True, timeout=5, stderr=subprocess.DEVNULL,
+        ).strip().split("\n")[0]
+        return f"sm_{out.replace('.', '')}"
+    except Exception:
+        return ""
+
+
+def _detect_cpu() -> str:
+    machine = platform_mod.machine()
+    try:
+        if platform_mod.system() == "Linux":
+            out = subprocess.check_output(
+                ["lscpu"], text=True, timeout=5, stderr=subprocess.DEVNULL,
+            )
+            for line in out.split("\n"):
+                if "Model name" in line:
+                    return line.split(":", 1)[1].strip()
+        elif platform_mod.system() == "Darwin":
+            out = subprocess.check_output(
+                ["sysctl", "-n", "machdep.cpu.brand_string"],
+                text=True, timeout=5,
+            ).strip()
+            return out
+    except Exception:
+        pass
+    return machine
+
+
+KNOWN_PLATFORMS = {
+    "dgx-spark": Platform(
+        name="dgx-spark", gpu="GB10", gpu_arch="sm_121",
+        memory_gb=128, bandwidth_gbps=273, cuda_version="13.0",
+        cpu="Grace ARM64", os_info="Ubuntu 24.04 aarch64",
+    ),
+    "jetson-orin-nano-8": Platform(
+        name="jetson-orin-nano-8", gpu="Orin Nano", gpu_arch="sm_87",
+        memory_gb=8, bandwidth_gbps=68, cuda_version="12.6",
+        cpu="ARM Cortex-A78AE", os_info="JetPack 6.x aarch64",
+    ),
+    "jetson-orin-nx-16": Platform(
+        name="jetson-orin-nx-16", gpu="Orin NX", gpu_arch="sm_87",
+        memory_gb=16, bandwidth_gbps=102, cuda_version="12.6",
+        cpu="ARM Cortex-A78AE", os_info="JetPack 6.x aarch64",
+    ),
+    "jetson-agx-orin-32": Platform(
+        name="jetson-agx-orin-32", gpu="Orin", gpu_arch="sm_87",
+        memory_gb=32, bandwidth_gbps=204, cuda_version="12.6",
+        cpu="ARM Cortex-A78AE", os_info="JetPack 6.x aarch64",
+    ),
+    "jetson-agx-orin-64": Platform(
+        name="jetson-agx-orin-64", gpu="Orin", gpu_arch="sm_87",
+        memory_gb=64, bandwidth_gbps=204, cuda_version="12.6",
+        cpu="ARM Cortex-A78AE", os_info="JetPack 6.x aarch64",
+    ),
+    "mac-studio-m4-max": Platform(
+        name="mac-studio-m4-max", gpu="M4 Max", gpu_arch="apple_m4",
+        memory_gb=128, bandwidth_gbps=546, cuda_version="metal",
+        cpu="Apple M4 Max", os_info="macOS arm64",
+    ),
+    "mac-studio-m4-ultra": Platform(
+        name="mac-studio-m4-ultra", gpu="M4 Ultra", gpu_arch="apple_m4",
+        memory_gb=192, bandwidth_gbps=800, cuda_version="metal",
+        cpu="Apple M4 Ultra", os_info="macOS arm64",
+    ),
+    "rtx-4090": Platform(
+        name="rtx-4090", gpu="RTX 4090", gpu_arch="sm_89",
+        memory_gb=24, bandwidth_gbps=1008, cuda_version="12.x",
+        cpu="x86_64", os_info="Linux x86_64",
+    ),
+    "rtx-5090": Platform(
+        name="rtx-5090", gpu="RTX 5090", gpu_arch="sm_100",
+        memory_gb=32, bandwidth_gbps=1792, cuda_version="12.8",
+        cpu="x86_64", os_info="Linux x86_64",
+    ),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +593,9 @@ def call_openai_compat(base_url: str, model_id: str, messages: list,
 @dataclass
 class BenchResult:
     timestamp: str
+    platform_name: str
+    platform_gpu: str
+    platform_memory_gb: int
     model_name: str
     engine: str
     arch: str
@@ -410,9 +615,13 @@ class BenchResult:
     error: str = ""
 
 
-def run_single(model: ModelConfig, prompt: dict) -> BenchResult:
+def run_single(model: ModelConfig, prompt: dict, plat: Platform) -> BenchResult:
     """Run a single model+prompt benchmark."""
     ts = datetime.now().isoformat()
+    plat_fields = dict(
+        platform_name=plat.name, platform_gpu=plat.gpu,
+        platform_memory_gb=plat.memory_gb,
+    )
     try:
         if model.engine == "ollama":
             result = call_ollama(
@@ -435,6 +644,7 @@ def run_single(model: ModelConfig, prompt: dict) -> BenchResult:
 
         return BenchResult(
             timestamp=ts,
+            **plat_fields,
             model_name=model.name,
             engine=model.engine,
             arch=model.arch,
@@ -455,6 +665,7 @@ def run_single(model: ModelConfig, prompt: dict) -> BenchResult:
     except Exception as e:
         return BenchResult(
             timestamp=ts,
+            **plat_fields,
             model_name=model.name,
             engine=model.engine,
             arch=model.arch,
@@ -512,13 +723,16 @@ def print_table(results: list[BenchResult]):
     print("=" * 110)
 
 
-def save_results(results: list[BenchResult], tag: str = ""):
-    """Save results to CSV and JSON."""
+def save_results(results: list[BenchResult], plat: Platform, tag: str = ""):
+    """Save results to CSV and JSON under results/{platform}/."""
+    plat_dir = RESULTS_DIR / plat.name
+    plat_dir.mkdir(parents=True, exist_ok=True)
+
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     stem = f"bench_{ts}" + (f"_{tag}" if tag else "")
 
-    csv_path = RESULTS_DIR / f"{stem}.csv"
-    json_path = RESULTS_DIR / f"{stem}.json"
+    csv_path = plat_dir / f"{stem}.csv"
+    json_path = plat_dir / f"{stem}.json"
 
     if results:
         with open(csv_path, "w", newline="") as f:
@@ -537,37 +751,71 @@ def save_results(results: list[BenchResult], tag: str = ""):
 # CLI
 # ---------------------------------------------------------------------------
 
+def _resolve_platform(args) -> Platform:
+    """Resolve platform from CLI args."""
+    name = getattr(args, "platform", "auto")
+    if name == "auto":
+        return Platform.detect()
+    return Platform.from_name(name)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="DGX Spark LLM Benchmark")
-    parser.add_argument("--models", nargs="+", help="Model names to test (default: all available)")
+    known_names = list(KNOWN_PLATFORMS.keys())
+    parser = argparse.ArgumentParser(
+        description="GPU Model Bench — Standardized LLM benchmark for any compute platform",
+    )
+    parser.add_argument("--platform", default="auto",
+                        help=f"Platform (auto|{'|'.join(known_names)})")
+    parser.add_argument("--models", nargs="+",
+                        help="Model names to test (default: all compatible & available)")
     parser.add_argument("--engines", nargs="+", choices=["ollama", "vllm", "sglang"],
                         help="Only test these engines")
     parser.add_argument("--suite", default="standard", choices=list(SUITES.keys()),
                         help="Prompt suite (default: standard)")
-    parser.add_argument("--list", action="store_true", help="List all configured models")
+    parser.add_argument("--list", action="store_true", help="List all models with compatibility info")
     parser.add_argument("--tag", default="", help="Tag for result files")
     parser.add_argument("--warmup", action="store_true",
                         help="Run a warmup query before benchmarking each model")
+    parser.add_argument("--no-filter", action="store_true",
+                        help="Don't filter models by platform memory (show/test all)")
     args = parser.parse_args()
 
+    plat = _resolve_platform(args)
+
     if args.list:
-        print(f"\n{'Name':<35} {'Engine':<8} {'Size':>6} {'Arch':<6} {'Active':<8} "
-              f"{'Cmty tok/s':>10} {'TC':>4}")
-        print("-" * 90)
+        max_gb = plat.max_model_gb()
+        print(f"\nPlatform: {plat.summary()}")
+        print(f"Max model size: {max_gb:.0f}GB (80% of {plat.memory_gb}GB)")
+        print(f"\n{'':>2}{'Name':<33} {'Engine':<8} {'Size':>6} {'Arch':<6} {'Active':<8} "
+              f"{'Cmty':>6} {'TC':>3} {'Fit':>4}")
+        print("-" * 95)
         for m in MODELS:
             cmty = f"{m.community_toks:.0f}" if m.community_toks else "-"
             tc = m.tool_call_support[0].upper()
-            avail = "✓" if is_model_available(m) else "✗"
+            fits = "✓" if m.size_gb <= max_gb else "✗"
+            avail = "✓" if is_model_available(m) else " "
             print(f"{avail} {m.name:<33} {m.engine:<8} {m.size_gb:>5.1f}G {m.arch:<6} "
-                  f"{m.active_params or 'all':<8} {cmty:>10} {tc:>4}")
+                  f"{m.active_params or 'all':<8} {cmty:>6} {tc:>3} {fits:>4}")
+        print(f"\n  ✓ (col 1) = installed/running   Fit = fits in {plat.memory_gb}GB memory")
         return
 
-    # Filter models
+    # Filter models by engine / name
     candidates = MODELS
     if args.engines:
         candidates = [m for m in candidates if m.engine in args.engines]
     if args.models:
         candidates = [m for m in candidates if m.name in args.models]
+
+    # Filter by platform memory
+    if not args.no_filter:
+        max_gb = plat.max_model_gb()
+        too_large = [m for m in candidates if m.size_gb > max_gb]
+        candidates = [m for m in candidates if m.size_gb <= max_gb]
+        if too_large:
+            print(f"\n⚠ Skipping {len(too_large)} model(s) too large for {plat.name} "
+                  f"({plat.memory_gb}GB):")
+            for m in too_large:
+                print(f"  - {m.name} ({m.size_gb:.0f}GB)")
 
     # Check availability
     available = []
@@ -588,10 +836,13 @@ def main():
         sys.exit(1)
 
     prompts = SUITES[args.suite]
-    print(f"\n🏁 DGX Spark Benchmark")
-    print(f"   Models: {len(available)}")
-    print(f"   Suite:  {args.suite} ({len(prompts)} prompts)")
-    print(f"   Memory: {get_memory_usage()}")
+    print(f"\n{'='*60}")
+    print(f"  GPU Model Bench")
+    print(f"  Platform: {plat.summary()}")
+    print(f"  Models:   {len(available)} available ({len(candidates)} compatible)")
+    print(f"  Suite:    {args.suite} ({len(prompts)} prompts)")
+    print(f"  Memory:   {get_memory_usage()}")
+    print(f"{'='*60}")
 
     results = []
     for i, model in enumerate(available, 1):
@@ -601,14 +852,14 @@ def main():
             print("  warming up...", end=" ", flush=True)
             try:
                 run_single(model, {"id": "warmup", "type": "chat",
-                                    "messages": [{"role": "user", "content": "hi"}]})
+                                    "messages": [{"role": "user", "content": "hi"}]}, plat)
                 print("done")
             except Exception:
                 print("failed")
 
         for prompt in prompts:
             print(f"  [{prompt['id']}] ", end="", flush=True)
-            result = run_single(model, prompt)
+            result = run_single(model, prompt, plat)
             results.append(result)
             if result.error:
                 print(f"ERROR: {result.error[:80]}")
@@ -617,7 +868,7 @@ def main():
                       f"{result.output_tokens} tokens")
 
     print_table(results)
-    save_results(results, args.tag)
+    save_results(results, plat, args.tag)
 
 
 if __name__ == "__main__":

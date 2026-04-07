@@ -173,7 +173,7 @@ OS:           Ubuntu 24.04.4 LTS (aarch64)
 ## 原始数据文件
 
 ```
-bench/results/
+bench/results/dgx-spark/
 ├── bench_20260403_100942_r2_baseline.{csv,json}              # qwen3.5:35b quick
 ├── bench_20260403_103024_r2_gemma4_e2b_quick.{csv,json}      # e2b quick
 ├── bench_20260403_103327_r2_gemma4_e2b_standard.{csv,json}   # e2b standard
