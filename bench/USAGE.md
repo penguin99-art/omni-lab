@@ -30,6 +30,8 @@ curl -s $OLLAMA_HOST/api/version
 2. `--suite quick` 先筛出速度/效率最好的候选
 3. 对候选模型跑 `--suite standard`
 4. 如需工具调用，再跑 `--suite toolcall`
+5. 如需首 token 延迟，再跑 `--suite ttft`
+6. 如需跨引擎对比，再加 `--matrix`
 
 ## 3. 常用命令
 
@@ -69,6 +71,28 @@ python3 bench/bench.py \
   --tag toolcall_check
 ```
 
+### TTFT 专项测试
+
+```bash
+OLLAMA_HOST=http://localhost:11436 \
+python3 bench/bench.py \
+  --models gemma4:e2b \
+  --suite ttft \
+  --ttft-runs 3 \
+  --tag ttft_check
+```
+
+### 引擎矩阵
+
+```bash
+OLLAMA_HOST=http://localhost:11436 \
+python3 bench/bench.py \
+  --suite quick \
+  --matrix \
+  --matrix-group qwen3.5-35b \
+  --tag matrix_check
+```
+
 ## 4. 输出文件
 
 每次运行会自动生成 3 个文件：
@@ -82,8 +106,14 @@ python3 bench/bench.py \
 1. 综合排名
 2. 每个 prompt 的速度/质量表
 3. Key Findings
-4. 架构对比
-5. 失败模型和错误原因
+4. 内存峰值 / swap 压力
+5. 架构对比
+6. 失败模型和错误原因
+
+额外报告：
+
+- `ttft_*.md`：TTFT 专项报告
+- `matrix_*.md`：引擎矩阵报告
 
 ## 5. 本次已验证流程
 
@@ -155,6 +185,58 @@ python3 bench/bench.py \
 - 综合排名：`#1`
 - 各 prompt `quality_score`：全部为 `1.00`
 
+### Step 4: TTFT 专项验证
+
+执行命令：
+
+```bash
+OLLAMA_HOST=http://localhost:11436 \
+python3 bench/bench.py \
+  --models gemma4:e2b \
+  --suite ttft \
+  --ttft-runs 2 \
+  --tag ttft_v1
+```
+
+生成文件：
+
+- `bench/results/dgx-spark/ttft_20260408_122934_ttft_v1.csv`
+- `bench/results/dgx-spark/ttft_20260408_122934_ttft_v1.json`
+- `bench/results/dgx-spark/ttft_20260408_122934_ttft_v1.md`
+
+结果摘要：
+
+- `short_cold`: `1.446s`
+- `short_warm`: `1.443s`
+- `long_cold`: `1.489s`
+- `long_warm`: `1.462s`
+
+当前结论：
+
+- Ollama 在这组测试里 **warm 几乎没有 prefix cache 收益**
+
+### Step 5: 引擎矩阵验证
+
+执行命令：
+
+```bash
+OLLAMA_HOST=http://localhost:11436 \
+python3 bench/bench.py \
+  --suite quick \
+  --matrix \
+  --matrix-group qwen3.5-35b \
+  --tag matrixcheck
+```
+
+生成文件：
+
+- `bench/results/dgx-spark/matrix_20260408_134326_matrixcheck.md`
+
+结果摘要：
+
+- 当前 `qwen3.5-35b` compare group 中，`ollama` 可用
+- `vllm` 版本已注册，但当前机器上未启动，因此矩阵报告会自动提示缺失引擎
+
 ## 6. 如何解读报告
 
 ### `quick` 报告看什么
@@ -168,7 +250,20 @@ python3 bench/bench.py \
 - `Avg quality`：平均质量分
 - `Composite`：综合排名分
 - `Best single-prompt quality`：哪一项答得最好
+- `Mem peak / Swap peak`：运行过程的内存压力
 - `Architecture Comparison`：MoE / Dense 在当前平台上的差异
+
+### `ttft` 报告看什么
+
+- `Case Summary`：short/long × cold/warm 的聚合结果
+- `Cache Impact`：warm 相比 cold 是否明显更快
+- `Raw Trials`：每次试验的明细
+
+### `matrix` 报告看什么
+
+- 同一 compare group 下各引擎的平均质量 / 速度 / TTFT / 内存峰值
+- 每个 prompt 的逐项拆分
+- 当前缺失哪些引擎
 
 ## 7. 常见问题
 

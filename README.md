@@ -44,15 +44,25 @@ python3 bench/bench.py --models "qwen3.5:35b" --suite standard
 
 # toolcall — 工具调用 (原生 tools API)
 python3 bench/bench.py --models "qwen3.5:35b" --suite toolcall
+
+# ttft — short/long × cold/warm 首 token 延迟
+python3 bench/bench.py --models "gemma4:e2b" --suite ttft --ttft-runs 3
 ```
 
 `standard` 报告会为每个 prompt 自动生成 `quality_score`，并汇总为模型综合排名。
+`ttft` 报告会自动汇总 cold/warm、short/long 的 TTFT 对比。
+
+### 引擎矩阵
+
+```bash
+# 同一 compare_group 的不同引擎版本做矩阵对比
+python3 bench/bench.py --suite quick --matrix --matrix-group qwen3.5-35b
+```
 
 ### TTFT 对比测试
 
 ```bash
-bash bench/start_vllm_fp8.sh                     # 启动 vLLM
-python3 bench/ttft_compare.py --engine both       # Ollama vs vLLM
+python3 bench/bench.py --models "gemma4:e2b" --suite ttft --ttft-runs 3
 ```
 
 ---
@@ -70,7 +80,9 @@ bench.py --platform auto
     └── 6. 自动生成报告 → results/{platform}/
         ├── bench_YYYYMMDD_HHMMSS.csv    # 原始数据
         ├── bench_YYYYMMDD_HHMMSS.json   # 结构化数据
-        └── bench_YYYYMMDD_HHMMSS.md     # 自动报告 (速度榜 + 质量榜 + 分析)
+        ├── bench_YYYYMMDD_HHMMSS.md     # 自动报告 (速度榜 + 质量榜 + 分析)
+        ├── ttft_YYYYMMDD_HHMMSS.md      # TTFT 报告
+        └── matrix_YYYYMMDD_HHMMSS.md    # 引擎矩阵报告
 ```
 
 ---
@@ -164,8 +176,9 @@ python3 bench/bench.py --suite quick   # 跑起来
 1. 总体综合排名（平均质量优先，速度为辅）
 2. 每个 prompt 的速度/质量排行榜
 3. Key Findings（最快、最低 TTFT、最高效率、最佳单项质量）
-4. MoE vs Dense 对比
-5. 失败模型与错误原因
+4. 内存峰值 / swap 压力
+5. MoE vs Dense 对比
+6. 失败模型与错误原因
 
 ## 项目结构
 

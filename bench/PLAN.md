@@ -69,6 +69,19 @@ python3 bench/bench.py --models "模型名" --suite standard
 python3 bench/bench.py --models "模型名" --suite toolcall
 ```
 
+### ttft — 首 token 延迟专项测试
+
+用于量化首 token 体感延迟，覆盖：
+
+- `short_cold`
+- `short_warm`
+- `long_cold`
+- `long_warm`
+
+```bash
+python3 bench/bench.py --models "模型名" --suite ttft --ttft-runs 3
+```
+
 ## 标准测试流程
 
 ```
@@ -100,9 +113,15 @@ Step 5: Toolcall 评测
   ├── 跑 toolcall suite
   └── 验证 tool_calls 返回正确性
 
+Step 5.5: TTFT 评测
+  ├── 跑 ttft suite
+  ├── 对比 cold / warm
+  └── 对比 short / long prompt
+
 Step 6: 结果汇总 (全自动)
   ├── CSV + JSON 原始数据 → results/{platform}/
-  ├── Markdown 报告自动生成 (排行榜 + Key Findings + 架构对比)
+  ├── Markdown 报告自动生成 (排行榜 + Key Findings + 架构对比 + 内存峰值)
+  ├── 可选生成引擎矩阵报告 (`--matrix`)
   ├── 失败模型自动标记错误原因
   └── 跨平台结果可直接对比
 ```
@@ -117,6 +136,8 @@ Step 6: 结果汇总 (全自动)
 | **output_tokens** | 输出 token 数 | 含 thinking tokens (Qwen) |
 | **tok/s per GB** | 内存效率 | tok/s ÷ 模型大小 |
 | **quality_score** | 启发式质量分 (0-1) | 按 prompt 规则自动打分 |
+| **mem_peak_gb** | 运行期间峰值内存 | benchmark 期间轮询采样 |
+| **swap_peak_gb** | 运行期间峰值 swap | benchmark 期间轮询采样 |
 | **tool_call_correct** | 工具调用正确率 | API 返回的 tool_calls 结构是否正确 |
 
 ## 结果目录结构
@@ -146,9 +167,24 @@ bench/results/
 2. **排行榜** — 按 tok/s 排序，奖牌标记 (🥇🥈🥉)，含 tok/s per GB 效率指标
 3. **综合排名** — 按平均质量优先、速度为辅进行模型排序
 4. **Key Findings** — 自动识别最快模型、最低 TTFT、最高效率、最佳单项质量、MoE vs Dense 对比
-5. **架构对比表** — MoE vs Dense 的 avg tok/s、TTFT、效率、质量
-6. **失败模型列表** — 附错误原因 (如 Ollama 版本不兼容)
-7. **原始数据引用** — 对应 CSV/JSON 文件名
+5. **内存字段** — 每条结果记录 `mem_peak_gb` / `swap_peak_gb` / `memory_pressure_note`
+6. **架构对比表** — MoE vs Dense 的 avg tok/s、TTFT、效率、质量、内存峰值
+7. **失败模型列表** — 附错误原因 (如 Ollama 版本不兼容)
+8. **原始数据引用** — 对应 CSV/JSON 文件名
+
+### 引擎矩阵报告
+
+加上 `--matrix` 后，会额外生成引擎对比矩阵报告：
+
+```bash
+python3 bench/bench.py --suite quick --matrix --matrix-group qwen3.5-35b
+```
+
+矩阵报告会按 `compare_group` 聚合同一模型在不同引擎下的版本，输出：
+
+1. 每个引擎的平均 `quality/tok/s/TTFT/mem peak`
+2. 每个 prompt 的逐项对比
+3. 当前组里缺失的引擎提示
 
 ## 关键发现 (跨平台通用经验)
 

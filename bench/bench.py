@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import ast
 import csv
 import json
 import os
@@ -22,6 +23,7 @@ import platform as platform_mod
 import re
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -375,6 +377,60 @@ SUITES = {
     ],
 }
 
+TTFT_SHORT_SYSTEM_PROMPT = "You are a helpful assistant. Answer concisely."
+
+TTFT_LONG_SYSTEM_PROMPT = """You are a highly capable AI assistant specialized in software engineering.
+You have deep expertise in Python, TypeScript, Rust, and Go. You follow best practices
+including clean code, proper error handling, comprehensive testing, and security awareness.
+
+When writing code:
+- Always include type hints and docstrings
+- Prefer maintainable, testable implementations
+- Explain important tradeoffs briefly
+
+When debugging:
+- Start by reproducing the issue
+- Use logs and runtime evidence
+- Think step by step before proposing a fix
+
+Current project context: you are helping benchmark LLMs across different compute platforms.
+Important metrics are tok/s, TTFT, quality score, memory efficiency, and tool calling accuracy."""
+
+TTFT_CASES = [
+    {
+        "id": "short_cold",
+        "prompt_size": "short",
+        "cache_state": "cold",
+        "system_prompt": TTFT_SHORT_SYSTEM_PROMPT,
+        "user_message": "Summarize prefix caching in one sentence.",
+        "warm": False,
+    },
+    {
+        "id": "short_warm",
+        "prompt_size": "short",
+        "cache_state": "warm",
+        "system_prompt": TTFT_SHORT_SYSTEM_PROMPT,
+        "user_message": "Summarize prefix caching in one sentence.",
+        "warm": True,
+    },
+    {
+        "id": "long_cold",
+        "prompt_size": "long",
+        "cache_state": "cold",
+        "system_prompt": TTFT_LONG_SYSTEM_PROMPT,
+        "user_message": "Summarize prefix caching in one sentence.",
+        "warm": False,
+    },
+    {
+        "id": "long_warm",
+        "prompt_size": "long",
+        "cache_state": "warm",
+        "system_prompt": TTFT_LONG_SYSTEM_PROMPT,
+        "user_message": "Summarize prefix caching in one sentence.",
+        "warm": True,
+    },
+]
+
 
 # ---------------------------------------------------------------------------
 # Model registry
@@ -393,6 +449,7 @@ class ModelConfig:
     setup_cmd: Optional[str] = None
     tool_call_support: str = "unknown"  # yes | partial | no | unknown
     community_toks: Optional[float] = None  # expected tok/s from community data
+    compare_group: str = ""
 
 
 MODELS = [
@@ -400,9 +457,11 @@ MODELS = [
     ModelConfig("qwen3.5:9b", "ollama", "qwen3.5:9b", 6.6, "dense",
                 notes="Lightweight, fast", community_toks=35),
     ModelConfig("qwen3.5:35b", "ollama", "qwen3.5:35b", 23, "moe", "3B",
-                notes="MoE 35B/3B active", community_toks=57, tool_call_support="partial"),
+                notes="MoE 35B/3B active", community_toks=57, tool_call_support="partial",
+                compare_group="qwen3.5-35b"),
     ModelConfig("qwen3.5:27b", "ollama", "qwen3.5:27b", 17, "dense",
-                notes="Dense 27B, slow but capable", community_toks=13),
+                notes="Dense 27B, slow but capable", community_toks=13,
+                compare_group="qwen3.5-27b"),
     ModelConfig("qwen3.5:122b-a10b", "ollama", "qwen3.5:122b-a10b", 81, "moe", "10B",
                 notes="Largest Qwen MoE", community_toks=23, tool_call_support="partial"),
     ModelConfig("qwen3:32b", "ollama", "qwen3:32b", 20, "dense",
@@ -410,9 +469,11 @@ MODELS = [
 
     # --- Ollama: NVIDIA models ---
     ModelConfig("gpt-oss:120b", "ollama", "gpt-oss:120b", 65, "moe",
-                notes="NVIDIA GPT-OSS 120B MoE", community_toks=41, tool_call_support="yes"),
+                notes="NVIDIA GPT-OSS 120B MoE", community_toks=41, tool_call_support="yes",
+                compare_group="gpt-oss-120b"),
     ModelConfig("gpt-oss:20b", "ollama", "gpt-oss:20b", 13, "moe",
-                notes="NVIDIA GPT-OSS 20B", community_toks=58, tool_call_support="no"),
+                notes="NVIDIA GPT-OSS 20B", community_toks=58, tool_call_support="no",
+                compare_group="gpt-oss-20b"),
     ModelConfig("nemotron-3-nano", "ollama", "nemotron-3-nano", 24, "moe", "3B",
                 notes="30B MoE, fastest on Spark", community_toks=69, tool_call_support="no"),
     ModelConfig("nemotron-3-super", "ollama", "nemotron-3-super", 86, "moe", "12B",
@@ -456,24 +517,30 @@ MODELS = [
     ModelConfig("qwen3.5-27b-fp8-vllm", "vllm", "Qwen/Qwen3.5-27B-FP8", 29, "dense",
                 base_url="http://localhost:18080/v1",
                 notes="Best tool calling accuracy, slow (~6 tok/s)",
-                community_toks=6, tool_call_support="yes"),
+                community_toks=6, tool_call_support="yes",
+                compare_group="qwen3.5-27b"),
 
     # --- vLLM + namake-taro patch (best performance) ---
     ModelConfig("qwen3.5-35b-mxfp4-vllm", "vllm", "Qwen/Qwen3.5-35B-A3B", 35, "moe", "3B",
                 base_url="http://localhost:18080/v1",
                 notes="MXFP4 quantized, requires namake-taro patch",
-                community_toks=60, tool_call_support="partial"),
+                community_toks=60, tool_call_support="partial",
+                compare_group="qwen3.5-35b"),
     ModelConfig("gpt-oss-120b-mxfp4-vllm", "vllm", "openai/gpt-oss-120b", 65, "moe",
                 base_url="http://localhost:18080/v1",
                 notes="MXFP4 quantized, requires namake-taro patch",
-                community_toks=81),
+                community_toks=81,
+                compare_group="gpt-oss-120b"),
 
     # --- SGLang Docker (sglang:spark) ---
     ModelConfig("gpt-oss-20b-sglang", "sglang", "openai/gpt-oss-20b", 13, "moe",
                 base_url="http://localhost:18080/v1",
                 notes="SGLang optimized for Spark",
-                community_toks=61, tool_call_support="no"),
+                community_toks=61, tool_call_support="no",
+                compare_group="gpt-oss-20b"),
 ]
+
+MODEL_BY_NAME = {m.name: m for m in MODELS}
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +671,143 @@ def _score_output_length(output_tokens: int, expected_min_tokens: int) -> float:
     return _clamp01(output_tokens / expected_min_tokens)
 
 
+def _extract_python_code(text: str) -> str:
+    """Extract the most likely Python snippet from a model response."""
+    fenced = re.findall(r"```(?:python)?\s*(.*?)```", text, flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        return max((block.strip() for block in fenced), key=len, default="")
+
+    lines = text.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith(("def ", "class ", "from ", "import ")):
+            start = i
+            break
+    if start is not None:
+        return "\n".join(lines[start:]).strip()
+
+    return text.strip()
+
+
+def _score_reasoning_response(text: str, output_tokens: int,
+                              expected_min_tokens: int) -> tuple[float, str]:
+    text_lower = text.lower()
+    has_nine = bool(re.search(r"\b9\b", text))
+    has_wrong_eight = bool(re.search(r"\b8\b", text))
+    mentions_key_logic = sum(
+        1 for marker in ["all but 9", "run away", "left", "remain", "still has"]
+        if marker in text_lower
+    )
+    has_final_answer = any(
+        marker in text_lower for marker in ["answer is 9", "there are 9", "has 9", "left with 9"]
+    )
+
+    score = 0.0
+    if has_nine:
+        score += 0.65
+    if has_final_answer:
+        score += 0.15
+    score += 0.15 * _clamp01(mentions_key_logic / 2)
+    score += 0.05 * _score_output_length(output_tokens, expected_min_tokens)
+
+    if has_wrong_eight and not has_nine:
+        score = min(score, 0.15)
+
+    note = "correct answer 9" if has_nine else "answer unclear"
+    if has_wrong_eight and not has_nine:
+        note = "likely answered 8"
+    return round(_clamp01(score), 2), note
+
+
+def _score_code_response(text: str, output_tokens: int,
+                         expected_min_tokens: int) -> tuple[float, str]:
+    code = _extract_python_code(text)
+    parsed_ok = False
+    has_def = False
+    has_type_hints = False
+    has_docstring = False
+    has_return = False
+    target_like_name = False
+    note_parts = []
+
+    try:
+        tree = ast.parse(code)
+        parsed_ok = True
+        funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        has_def = bool(funcs)
+        has_return = any(isinstance(n, ast.Return) for n in ast.walk(tree))
+        if funcs:
+            has_docstring = bool(ast.get_docstring(funcs[0]))
+            for fn in funcs:
+                if fn.returns is not None or any(arg.annotation is not None for arg in fn.args.args):
+                    has_type_hints = True
+                if "pal" in fn.name.lower():
+                    target_like_name = True
+    except SyntaxError:
+        parsed_ok = False
+
+    text_lower = text.lower()
+    mentions_palindrome = "palindrome" in text_lower or "palindromic" in text_lower
+    score = (
+        0.35 * float(parsed_ok) +
+        0.2 * float(has_def) +
+        0.15 * float(has_type_hints) +
+        0.1 * float(has_docstring) +
+        0.1 * float(has_return) +
+        0.05 * float(target_like_name or mentions_palindrome) +
+        0.05 * _score_output_length(output_tokens, expected_min_tokens)
+    )
+
+    if parsed_ok:
+        note_parts.append("ast ok")
+    if has_def:
+        note_parts.append("function")
+    if has_type_hints:
+        note_parts.append("type hints")
+    if has_docstring:
+        note_parts.append("docstring")
+    if has_return:
+        note_parts.append("return")
+    if not note_parts:
+        note_parts.append("syntax invalid")
+    return round(_clamp01(score), 2), ", ".join(note_parts)
+
+
+def _score_long_output_response(text: str, output_tokens: int,
+                                expected_min_tokens: int) -> tuple[float, str]:
+    words = len(re.findall(r"\b[\w-]+\b", text))
+    length_score = _clamp01(words / 500) if words else _score_output_length(output_tokens, expected_min_tokens)
+    topic_hits = sum(
+        1 for term in ["edge", "ai", "latency", "device", "inference", "privacy"]
+        if term in text.lower()
+    )
+    score = 0.75 * length_score + 0.25 * _clamp01(topic_hits / 3)
+    return round(_clamp01(score), 2), f"{words} words, {topic_hits} topic hits"
+
+
+def _score_chinese_response(text: str) -> tuple[float, str]:
+    cjk_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
+    latin_chars = len(re.findall(r"[A-Za-z]", text))
+    chinese_ratio = cjk_chars / max(cjk_chars + latin_chars, 1)
+    has_moe = "moe" in text.lower() or "混合专家" in text
+    has_dense = "dense" in text.lower() or "稠密" in text
+    has_pros = "优势" in text or "优点" in text
+    has_cons = "劣势" in text or "缺点" in text
+    has_compare = "相比" in text or "相比于" in text or "对比" in text
+    score = (
+        0.25 * _clamp01(cjk_chars / 150) +
+        0.2 * _clamp01(chinese_ratio / 0.6) +
+        0.15 * float(has_moe) +
+        0.15 * float(has_dense) +
+        0.1 * float(has_pros) +
+        0.1 * float(has_cons) +
+        0.05 * float(has_compare)
+    )
+    note = f"{cjk_chars} CJK chars, zh ratio {chinese_ratio:.2f}"
+    return round(_clamp01(score), 2), note
+
+
 def _score_quality(prompt: dict, content: str, output_tokens: int,
                    tool_call_correct: bool) -> tuple[float, str]:
     """Heuristic quality scoring for benchmark prompts."""
@@ -634,71 +838,23 @@ def _score_quality(prompt: dict, content: str, output_tokens: int,
         return round(score, 2), f"{len(greeting_hits)} greetings recognized"
 
     if prompt_id == "reasoning":
-        has_nine = bool(re.search(r"\b9\b", text))
-        mentions_logic = any(x in text_lower for x in ["all but 9", "run away", "left", "remain"])
-        wrong_shortcut = bool(re.search(r"\b8\b", text)) and not has_nine
-        score = 0.0
-        if has_nine:
-            score += 0.75
-        if mentions_logic:
-            score += 0.2
-        if output_tokens >= expected_min_tokens:
-            score += 0.05
-        if wrong_shortcut:
-            score = min(score, 0.2)
-        note = "correct answer 9" if has_nine else "answer unclear"
-        return round(_clamp01(score), 2), note
+        return _score_reasoning_response(text, output_tokens, expected_min_tokens)
 
     if prompt_id == "code":
-        has_def = "def " in text
-        has_type_hints = "->" in text
-        has_docstring = '"""' in text or "'''" in text
-        mentions_palindrome = "palindrome" in text_lower or "palindromic" in text_lower
-        score = (
-            0.3 * has_def +
-            0.2 * has_type_hints +
-            0.2 * has_docstring +
-            0.1 * mentions_palindrome +
-            0.2 * _score_output_length(output_tokens, expected_min_tokens)
-        )
-        parts = []
-        if has_def:
-            parts.append("function")
-        if has_type_hints:
-            parts.append("type hints")
-        if has_docstring:
-            parts.append("docstring")
-        return round(_clamp01(score), 2), ", ".join(parts) if parts else "structure incomplete"
+        return _score_code_response(text, output_tokens, expected_min_tokens)
 
     if prompt_id == "long_output":
-        length_score = _score_output_length(output_tokens, expected_min_tokens)
-        mentions_topic = all(term in text_lower for term in ["edge", "ai"])
-        score = 0.8 * length_score + 0.2 * float(mentions_topic)
-        note = f"{output_tokens}/{expected_min_tokens} tokens"
-        return round(_clamp01(score), 2), note
+        return _score_long_output_response(text, output_tokens, expected_min_tokens)
 
     if prompt_id == "chinese":
-        cjk_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
-        has_moe = "moe" in text_lower or "混合专家" in text
-        has_dense = "dense" in text_lower or "稠密" in text
-        has_pros = "优势" in text or "优点" in text
-        has_cons = "劣势" in text or "缺点" in text
-        score = (
-            0.3 * _clamp01(cjk_chars / 80) +
-            0.2 * has_moe +
-            0.2 * has_dense +
-            0.15 * has_pros +
-            0.15 * has_cons
-        )
-        note = f"{cjk_chars} CJK chars"
-        return round(_clamp01(score), 2), note
+        return _score_chinese_response(text)
 
     score = _score_output_length(output_tokens, expected_min_tokens)
     return round(score, 2), f"{output_tokens}/{expected_min_tokens} tokens"
 
 
 # ---------------------------------------------------------------------------
-# Benchmark runner
+# Benchmark runners
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -721,11 +877,292 @@ class BenchResult:
     wall_sec: float
     tool_calls_count: int
     tool_call_correct: bool
+    mem_used_before_gb: Optional[float] = None
+    mem_peak_gb: Optional[float] = None
+    mem_used_after_gb: Optional[float] = None
+    swap_used_before_gb: Optional[float] = None
+    swap_peak_gb: Optional[float] = None
+    swap_used_after_gb: Optional[float] = None
+    memory_pressure_note: str = ""
     quality_score: float = 0.0
     quality_notes: str = ""
     content_preview: str = ""
     community_toks: Optional[float] = None
     error: str = ""
+
+
+@dataclass
+class TTFTResult:
+    timestamp: str
+    platform_name: str
+    platform_gpu: str
+    platform_memory_gb: int
+    model_name: str
+    engine: str
+    case_id: str
+    prompt_size: str
+    cache_state: str
+    trial: int
+    system_prompt_chars: int
+    user_prompt_chars: int
+    ttft_sec: Optional[float]
+    wall_sec: float
+    output_tokens: int
+    mem_used_before_gb: Optional[float] = None
+    mem_peak_gb: Optional[float] = None
+    mem_used_after_gb: Optional[float] = None
+    swap_used_before_gb: Optional[float] = None
+    swap_peak_gb: Optional[float] = None
+    swap_used_after_gb: Optional[float] = None
+    memory_pressure_note: str = ""
+    content_preview: str = ""
+    error: str = ""
+
+
+def _read_memory_snapshot() -> dict:
+    """Read current system memory and swap usage in GB."""
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        return {
+            "mem_used_gb": round(mem.used / 1e9, 2),
+            "swap_used_gb": round(swap.used / 1e9, 2),
+        }
+    except Exception:
+        return {
+            "mem_used_gb": None,
+            "swap_used_gb": None,
+        }
+
+
+def _summarize_memory_pressure(before: dict, peak: dict) -> str:
+    notes = []
+    mem_before = before.get("mem_used_gb")
+    mem_peak = peak.get("mem_used_gb")
+    swap_before = before.get("swap_used_gb")
+    swap_peak = peak.get("swap_used_gb")
+    if mem_before is not None and mem_peak is not None:
+        mem_delta = mem_peak - mem_before
+        if mem_delta >= 5:
+            notes.append(f"peak +{mem_delta:.1f}GB")
+    if swap_before is not None and swap_peak is not None:
+        swap_delta = swap_peak - swap_before
+        if swap_delta > 0.1:
+            notes.append(f"swap +{swap_delta:.1f}GB")
+    return ", ".join(notes) if notes else "stable"
+
+
+class MemoryMonitor:
+    """Background sampler for peak memory and swap usage."""
+
+    def __init__(self, interval_sec: float = 0.2):
+        self.interval_sec = interval_sec
+        self.before = _read_memory_snapshot()
+        self.peak = dict(self.before)
+        self.after = dict(self.before)
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def _poll(self):
+        while not self._stop.is_set():
+            snap = _read_memory_snapshot()
+            for key in ("mem_used_gb", "swap_used_gb"):
+                cur = snap.get(key)
+                peak = self.peak.get(key)
+                if cur is not None and (peak is None or cur > peak):
+                    self.peak[key] = cur
+            self._stop.wait(self.interval_sec)
+
+    def start(self):
+        self._thread = threading.Thread(target=self._poll, daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> dict:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+        self.after = _read_memory_snapshot()
+        return {
+            "mem_used_before_gb": self.before.get("mem_used_gb"),
+            "mem_peak_gb": self.peak.get("mem_used_gb"),
+            "mem_used_after_gb": self.after.get("mem_used_gb"),
+            "swap_used_before_gb": self.before.get("swap_used_gb"),
+            "swap_peak_gb": self.peak.get("swap_used_gb"),
+            "swap_used_after_gb": self.after.get("swap_used_gb"),
+            "memory_pressure_note": _summarize_memory_pressure(self.before, self.peak),
+        }
+
+
+def _measure_ollama_ttft(model_id: str, messages: list, base_url: str = "",
+                         timeout: float = 120, max_tokens: int = 128) -> dict:
+    url = base_url or get_ollama_base_url()
+    payload = {
+        "model": model_id,
+        "messages": messages,
+        "stream": True,
+        "options": {"num_predict": max_tokens},
+    }
+
+    t0 = time.perf_counter()
+    first_token_time = None
+    total_tokens = 0
+    content = ""
+
+    with httpx.stream("POST", f"{url}/api/chat", json=payload, timeout=timeout) as r:
+        for line in r.iter_lines():
+            if not line:
+                continue
+            data = json.loads(line)
+            if "error" in data:
+                raise RuntimeError(f"ollama: {data['error']}")
+            chunk = data.get("message", {}).get("content", "")
+            if first_token_time is None and chunk:
+                first_token_time = time.perf_counter()
+            content += chunk
+            if data.get("done"):
+                total_tokens = data.get("eval_count", 0)
+                break
+
+    wall_time = time.perf_counter() - t0
+    ttft = (first_token_time - t0) if first_token_time else wall_time
+    return {
+        "ttft_sec": round(ttft, 4) if ttft is not None else None,
+        "wall_sec": round(wall_time, 2),
+        "output_tokens": total_tokens,
+        "content_preview": content[:120].replace("\n", " "),
+    }
+
+
+def _measure_openai_ttft(base_url: str, model_id: str, messages: list,
+                         timeout: float = 120, max_tokens: int = 128) -> dict:
+    payload = {
+        "model": model_id,
+        "messages": messages,
+        "stream": True,
+        "max_tokens": max_tokens,
+    }
+    if "v1" in base_url:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+
+    t0 = time.perf_counter()
+    first_token_time = None
+    total_tokens = 0
+    content = ""
+
+    with httpx.stream("POST", f"{base_url}/chat/completions", json=payload, timeout=timeout) as r:
+        for line in r.iter_lines():
+            if not line or not line.startswith("data: "):
+                continue
+            data_str = line[6:].strip()
+            if data_str == "[DONE]":
+                break
+            data = json.loads(data_str)
+            if "error" in data:
+                raise RuntimeError(f"api: {data['error']}")
+            choice = data.get("choices", [{}])[0]
+            delta = choice.get("delta", {})
+            chunk = delta.get("content", "")
+            if first_token_time is None and chunk:
+                first_token_time = time.perf_counter()
+            content += chunk
+            usage = data.get("usage", {})
+            if usage:
+                total_tokens = usage.get("completion_tokens", total_tokens)
+
+    wall_time = time.perf_counter() - t0
+    if total_tokens == 0 and content:
+        total_tokens = len(content.split())
+    ttft = (first_token_time - t0) if first_token_time else wall_time
+    return {
+        "ttft_sec": round(ttft, 4) if ttft is not None else None,
+        "wall_sec": round(wall_time, 2),
+        "output_tokens": total_tokens,
+        "content_preview": content[:120].replace("\n", " "),
+    }
+
+
+def _build_ttft_messages(case: dict, trial: int) -> list[dict]:
+    system_prompt = case["system_prompt"]
+    if case["cache_state"] == "cold":
+        system_prompt = f"{system_prompt}\n\nCache-bust nonce: {trial}-{time.time_ns()}"
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": case["user_message"]},
+    ]
+
+
+def run_ttft_single(model: ModelConfig, case: dict, plat: Platform,
+                    trial: int, max_tokens: int = 128) -> TTFTResult:
+    ts = datetime.now().isoformat()
+    plat_fields = dict(
+        platform_name=plat.name,
+        platform_gpu=plat.gpu,
+        platform_memory_gb=plat.memory_gb,
+    )
+    try:
+        monitor = MemoryMonitor().start()
+        messages = _build_ttft_messages(case, trial)
+        if case["warm"]:
+            prime_messages = [m.copy() for m in messages]
+            if model.engine == "ollama":
+                _measure_ollama_ttft(
+                    model.model_id, prime_messages, base_url=model.base_url,
+                    max_tokens=max_tokens,
+                )
+            else:
+                _measure_openai_ttft(
+                    model.base_url, model.model_id, prime_messages, max_tokens=max_tokens,
+                )
+
+        if model.engine == "ollama":
+            result = _measure_ollama_ttft(
+                model.model_id, messages, base_url=model.base_url, max_tokens=max_tokens,
+            )
+        else:
+            result = _measure_openai_ttft(
+                model.base_url, model.model_id, messages, max_tokens=max_tokens,
+            )
+        mem_stats = monitor.stop()
+
+        return TTFTResult(
+            timestamp=ts,
+            **plat_fields,
+            model_name=model.name,
+            engine=model.engine,
+            case_id=case["id"],
+            prompt_size=case["prompt_size"],
+            cache_state=case["cache_state"],
+            trial=trial,
+            system_prompt_chars=len(messages[0]["content"]),
+            user_prompt_chars=len(messages[1]["content"]),
+            ttft_sec=result["ttft_sec"],
+            wall_sec=result["wall_sec"],
+            output_tokens=result["output_tokens"],
+            **mem_stats,
+            content_preview=result["content_preview"],
+        )
+    except Exception as e:
+        mem_stats = monitor.stop() if "monitor" in locals() else {}
+        return TTFTResult(
+            timestamp=ts,
+            **plat_fields,
+            model_name=model.name,
+            engine=model.engine,
+            case_id=case["id"],
+            prompt_size=case["prompt_size"],
+            cache_state=case["cache_state"],
+            trial=trial,
+            system_prompt_chars=len(case["system_prompt"]),
+            user_prompt_chars=len(case["user_message"]),
+            ttft_sec=None,
+            wall_sec=0,
+            output_tokens=0,
+            **mem_stats,
+            content_preview="",
+            error=str(e)[:200],
+        )
 
 
 def run_single(model: ModelConfig, prompt: dict, plat: Platform) -> BenchResult:
@@ -736,6 +1173,7 @@ def run_single(model: ModelConfig, prompt: dict, plat: Platform) -> BenchResult:
         platform_memory_gb=plat.memory_gb,
     )
     try:
+        monitor = MemoryMonitor().start()
         if model.engine == "ollama":
             result = call_ollama(
                 model.model_id,
@@ -750,6 +1188,7 @@ def run_single(model: ModelConfig, prompt: dict, plat: Platform) -> BenchResult:
                 prompt["messages"],
                 tools=prompt.get("tools"),
             )
+        mem_stats = monitor.stop()
 
         tc = result.get("tool_calls") or []
         tc_correct = False
@@ -779,12 +1218,14 @@ def run_single(model: ModelConfig, prompt: dict, plat: Platform) -> BenchResult:
             wall_sec=round(result["wall_sec"], 2),
             tool_calls_count=len(tc),
             tool_call_correct=tc_correct,
+            **mem_stats,
             quality_score=quality_score,
             quality_notes=quality_notes,
             content_preview=result["content"][:200].replace("\n", " "),
             community_toks=model.community_toks,
         )
     except Exception as e:
+        mem_stats = monitor.stop() if "monitor" in locals() else {}
         return BenchResult(
             timestamp=ts,
             **plat_fields,
@@ -802,6 +1243,7 @@ def run_single(model: ModelConfig, prompt: dict, plat: Platform) -> BenchResult:
             wall_sec=0,
             tool_calls_count=0,
             tool_call_correct=False,
+            **mem_stats,
             quality_score=0.0,
             quality_notes="request failed",
             content_preview="",
@@ -827,25 +1269,141 @@ def is_model_available(model: ModelConfig) -> bool:
         return check_openai_endpoint(model.base_url, model.model_id)
 
 
+def _model_compare_group(model_name: str) -> str:
+    model = MODEL_BY_NAME.get(model_name)
+    if model:
+        return model.compare_group or model.name
+    return model_name
+
+
+def save_matrix_report(results: list[BenchResult], plat: Platform, suite_name: str, tag: str = ""):
+    """Generate an engine comparison matrix report from benchmark results."""
+    plat_dir = RESULTS_DIR / plat.name
+    plat_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stem = f"matrix_{ts}" + (f"_{tag}" if tag else "")
+    report_path = plat_dir / f"{stem}.md"
+
+    ok = [r for r in results if r.output_tokens > 0 and not r.error]
+    grouped: dict[str, dict[str, list[BenchResult]]] = {}
+    for r in ok:
+        grouped.setdefault(_model_compare_group(r.model_name), {}).setdefault(r.model_name, []).append(r)
+
+    lines = [
+        f"# Engine Matrix Report — {plat.name}",
+        "",
+        f"> Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}  ",
+        f"> Platform: **{plat.gpu}** | {plat.memory_gb}GB | {plat.bandwidth_gbps} GB/s | CUDA {plat.cuda_version}  ",
+        f"> Suite: `{suite_name}`  ",
+        f"> Compare groups: {len(grouped)}",
+        "",
+    ]
+
+    if not grouped:
+        lines.append("No successful benchmark results available for matrix generation.")
+        report_path.write_text("\n".join(lines), encoding="utf-8")
+        print(f"\nMatrix report saved to:\n  {report_path}")
+        return
+
+    for compare_group, model_map in sorted(grouped.items()):
+        lines.append(f"## Group: `{compare_group}`")
+        lines.append("")
+        lines.append("| Engine | Model | Prompts | Avg quality | Avg tok/s | Avg TTFT | Avg mem peak | Avg swap peak |")
+        lines.append("|--------|-------|-------:|------------:|----------:|---------:|-------------:|--------------:|")
+
+        rows = []
+        for model_name, model_results in model_map.items():
+            sample = model_results[0]
+            avg_quality = sum(r.quality_score for r in model_results) / len(model_results)
+            avg_tok = sum(r.tok_per_sec for r in model_results) / len(model_results)
+            ttfts = [r.ttft_sec for r in model_results if r.ttft_sec is not None]
+            avg_ttft = (sum(ttfts) / len(ttfts)) if ttfts else None
+            mem_peaks = [r.mem_peak_gb for r in model_results if r.mem_peak_gb is not None]
+            swap_peaks = [r.swap_peak_gb for r in model_results if r.swap_peak_gb is not None]
+            avg_mem = (sum(mem_peaks) / len(mem_peaks)) if mem_peaks else None
+            avg_swap = (sum(swap_peaks) / len(swap_peaks)) if swap_peaks else None
+            rows.append((sample.engine, model_name, len(model_results), avg_quality, avg_tok, avg_ttft, avg_mem, avg_swap))
+
+        rows.sort(key=lambda row: (row[3], row[4]), reverse=True)
+        for engine, model_name, prompt_count, avg_quality, avg_tok, avg_ttft, avg_mem, avg_swap in rows:
+            ttft_str = f"{avg_ttft:.3f}s" if avg_ttft is not None else "-"
+            mem_str = f"{avg_mem:.1f}GB" if avg_mem is not None else "-"
+            swap_str = f"{avg_swap:.1f}GB" if avg_swap is not None else "-"
+            lines.append(
+                f"| {engine} | {model_name} | {prompt_count} | **{avg_quality:.2f}** | "
+                f"{avg_tok:.1f} | {ttft_str} | {mem_str} | {swap_str} |"
+            )
+        lines.append("")
+
+        prompt_ids = sorted({r.prompt_id for rows in model_map.values() for r in rows})
+        lines.append("### Prompt Breakdown")
+        lines.append("")
+        lines.append("| Prompt | Engine | Model | tok/s | Quality | TTFT | Mem peak |")
+        lines.append("|--------|--------|-------|------:|--------:|-----:|---------:|")
+        for prompt_id in prompt_ids:
+            prompt_rows = [
+                r for rows in model_map.values() for r in rows
+                if r.prompt_id == prompt_id
+            ]
+            prompt_rows.sort(key=lambda r: (r.quality_score, r.tok_per_sec), reverse=True)
+            for r in prompt_rows:
+                ttft_str = f"{r.ttft_sec:.3f}s" if r.ttft_sec is not None else "-"
+                mem_str = f"{r.mem_peak_gb:.1f}GB" if r.mem_peak_gb is not None else "-"
+                lines.append(
+                    f"| {prompt_id} | {r.engine} | {r.model_name} | {r.tok_per_sec:.1f} | "
+                    f"{r.quality_score:.2f} | {ttft_str} | {mem_str} |"
+                )
+        lines.append("")
+
+        engines_present = sorted({items[0].engine for items in model_map.values() if items})
+        if len(engines_present) < 2:
+            lines.append(f"> Only one engine available in this group right now: `{', '.join(engines_present)}`.")
+            lines.append("")
+
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"\nMatrix report saved to:\n  {report_path}")
+
+
 def print_table(results: list[BenchResult]):
     """Print results as a formatted table."""
     if not results:
         return
 
-    print("\n" + "=" * 118)
+    print("\n" + "=" * 136)
     print(f"{'Model':<30} {'Engine':<8} {'Prompt':<14} {'tok/s':>7} {'TTFT':>7} "
-          f"{'Wall':>7} {'OutTok':>7} {'Qual':>5} {'Cmty':>6} {'TC':>3}")
-    print("-" * 118)
+          f"{'Wall':>7} {'OutTok':>7} {'Qual':>5} {'MemPk':>6} {'SwapPk':>7} {'Cmty':>6} {'TC':>3}")
+    print("-" * 136)
     for r in results:
         ttft = f"{r.ttft_sec:.2f}s" if r.ttft_sec else "  -"
         cmty = f"{r.community_toks:.0f}" if r.community_toks else " -"
         tc = "✓" if r.tool_call_correct else ("✗" if r.prompt_type == "tool_call" else "-")
         err = " ⚠" if r.error else ""
         quality = f"{r.quality_score:.2f}"
+        mem_peak = f"{r.mem_peak_gb:.1f}" if r.mem_peak_gb is not None else "-"
+        swap_peak = f"{r.swap_peak_gb:.1f}" if r.swap_peak_gb is not None else "-"
         print(f"{r.model_name:<30} {r.engine:<8} {r.prompt_id:<14} "
               f"{r.tok_per_sec:>6.1f} {ttft:>7} {r.wall_sec:>6.1f}s "
-              f"{r.output_tokens:>6} {quality:>5} {cmty:>6} {tc:>3}{err}")
-    print("=" * 118)
+              f"{r.output_tokens:>6} {quality:>5} {mem_peak:>6} {swap_peak:>7} {cmty:>6} {tc:>3}{err}")
+    print("=" * 136)
+
+
+def print_ttft_table(results: list[TTFTResult]):
+    """Print TTFT results as a formatted table."""
+    if not results:
+        return
+
+    print("\n" + "=" * 128)
+    print(f"{'Model':<30} {'Engine':<8} {'Case':<12} {'Trial':>5} {'TTFT':>8} {'Wall':>7} {'OutTok':>7} {'MemPk':>6} {'SwapPk':>7} {'Err':>4}")
+    print("-" * 128)
+    for r in results:
+        ttft = f"{r.ttft_sec:.3f}s" if r.ttft_sec is not None else "-"
+        err = "⚠" if r.error else ""
+        mem_peak = f"{r.mem_peak_gb:.1f}" if r.mem_peak_gb is not None else "-"
+        swap_peak = f"{r.swap_peak_gb:.1f}" if r.swap_peak_gb is not None else "-"
+        print(f"{r.model_name:<30} {r.engine:<8} {r.case_id:<12} {r.trial:>5} "
+              f"{ttft:>8} {r.wall_sec:>6.1f}s {r.output_tokens:>7} {mem_peak:>6} {swap_peak:>7} {err:>4}")
+    print("=" * 128)
 
 
 def save_results(results: list[BenchResult], plat: Platform, tag: str = ""):
@@ -873,6 +1431,44 @@ def save_results(results: list[BenchResult], plat: Platform, tag: str = ""):
         _generate_report(results, plat, report_path, stem)
 
         print(f"\nResults saved to:\n  {csv_path}\n  {json_path}\n  {report_path}")
+
+
+def save_ttft_results(results: list[TTFTResult], plat: Platform, tag: str = ""):
+    """Save TTFT results to CSV, JSON, and Markdown report under results/{platform}/."""
+    plat_dir = RESULTS_DIR / plat.name
+    plat_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stem = f"ttft_{ts}" + (f"_{tag}" if tag else "")
+
+    csv_path = plat_dir / f"{stem}.csv"
+    json_path = plat_dir / f"{stem}.json"
+    report_path = plat_dir / f"{stem}.md"
+
+    if results:
+        with open(csv_path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(asdict(results[0]).keys()))
+            w.writeheader()
+            for r in results:
+                w.writerow(asdict(r))
+
+        with open(json_path, "w") as f:
+            json.dump([asdict(r) for r in results], f, indent=2, ensure_ascii=False)
+
+        _generate_ttft_report(results, plat, report_path, stem)
+
+        print(f"\nResults saved to:\n  {csv_path}\n  {json_path}\n  {report_path}")
+
+
+def _aggregate_numeric(values: list[float]) -> tuple[float, float, float, float]:
+    ordered = sorted(values)
+    avg = sum(ordered) / len(ordered)
+    mid = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        p50 = ordered[mid]
+    else:
+        p50 = (ordered[mid - 1] + ordered[mid]) / 2
+    return avg, p50, ordered[0], ordered[-1]
 
 
 def _generate_report(results: list[BenchResult], plat: Platform,
@@ -936,17 +1532,20 @@ def _generate_report(results: list[BenchResult], plat: Platform,
 
         lines.append(f"## Prompt: `{pid}`")
         lines.append("")
-        lines.append("| # | Model | Engine | Arch | Size | tok/s | TTFT | Wall | Tokens | Quality | tok/s per GB |")
-        lines.append("|---|-------|--------|------|------|------:|-----:|-----:|-------:|--------:|-------------:|")
+        lines.append("| # | Model | Engine | Arch | Size | tok/s | TTFT | Wall | Tokens | Quality | Mem peak | Swap peak | tok/s per GB |")
+        lines.append("|---|-------|--------|------|------|------:|-----:|-----:|-------:|--------:|---------:|----------:|-------------:|")
 
         for i, r in enumerate(ranked, 1):
             ttft = f"{r.ttft_sec:.2f}s" if r.ttft_sec else "-"
             tpg = r.tok_per_sec / r.size_gb if r.size_gb > 0 else 0
             medal = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{i}"))
+            mem_peak = f"{r.mem_peak_gb:.1f}GB" if r.mem_peak_gb is not None else "-"
+            swap_peak = f"{r.swap_peak_gb:.1f}GB" if r.swap_peak_gb is not None else "-"
             lines.append(
                 f"| {medal} | {r.model_name} | {r.engine} | {r.arch} "
                 f"| {r.size_gb:.0f}GB | **{r.tok_per_sec:.1f}** | {ttft} "
-                f"| {r.wall_sec:.1f}s | {r.output_tokens} | {r.quality_score:.2f} | {tpg:.1f} |"
+                f"| {r.wall_sec:.1f}s | {r.output_tokens} | {r.quality_score:.2f} "
+                f"| {mem_peak} | {swap_peak} | {tpg:.1f} |"
             )
         lines.append("")
 
@@ -972,6 +1571,13 @@ def _generate_report(results: list[BenchResult], plat: Platform,
         lines.append(f"- **Best single-prompt quality**: {best_quality.model_name} "
                       f"on `{best_quality.prompt_id}` @ **{best_quality.quality_score:.2f}** "
                       f"({best_quality.quality_notes})")
+
+        mem_tracked = [r for r in ok if r.mem_peak_gb is not None]
+        if mem_tracked:
+            highest_mem = max(mem_tracked, key=lambda r: r.mem_peak_gb or 0)
+            lines.append(f"- **Highest memory peak**: {highest_mem.model_name} "
+                          f"on `{highest_mem.prompt_id}` @ **{highest_mem.mem_peak_gb:.1f}GB** "
+                          f"({highest_mem.memory_pressure_note})")
 
         moe = [r for r in ok if r.arch == "moe"]
         dense = [r for r in ok if r.arch == "dense"]
@@ -1007,6 +1613,10 @@ def _generate_report(results: list[BenchResult], plat: Platform,
         avg_moe_quality = sum(r.quality_score for r in moe_ok) / len(moe_ok)
         avg_dense_quality = sum(r.quality_score for r in dense_ok) / len(dense_ok)
         lines.append(f"| Avg quality | {avg_moe_quality:.2f} | {avg_dense_quality:.2f} |")
+        moe_mem = [r.mem_peak_gb for r in moe_ok if r.mem_peak_gb is not None]
+        dense_mem = [r.mem_peak_gb for r in dense_ok if r.mem_peak_gb is not None]
+        if moe_mem and dense_mem:
+            lines.append(f"| Avg mem peak | {sum(moe_mem) / len(moe_mem):.1f}GB | {sum(dense_mem) / len(dense_mem):.1f}GB |")
         lines.append(f"| Count | {len(moe_ok)} | {len(dense_ok)} |")
         lines.append("")
 
@@ -1020,6 +1630,104 @@ def _generate_report(results: list[BenchResult], plat: Platform,
         lines.append("")
 
     # Raw data reference
+    lines.append("## Raw Data")
+    lines.append("")
+    lines.append(f"- CSV: `{stem}.csv`")
+    lines.append(f"- JSON: `{stem}.json`")
+    lines.append("")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _generate_ttft_report(results: list[TTFTResult], plat: Platform,
+                          path: Path, stem: str):
+    """Generate a Markdown TTFT report."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ok = [r for r in results if r.ttft_sec is not None and not r.error]
+    failed = [r for r in results if r.ttft_sec is None or r.error]
+
+    lines = [
+        f"# TTFT Report — {plat.name}",
+        "",
+        f"> Generated: {now}  ",
+        f"> Platform: **{plat.gpu}** | {plat.memory_gb}GB | {plat.bandwidth_gbps} GB/s | CUDA {plat.cuda_version}  ",
+        f"> Models tested: {len(set(r.model_name for r in results))} | Trials: {len(results)}  ",
+        f"> Cases: short/long x cold/warm",
+        "",
+    ]
+
+    grouped: dict[tuple[str, str], list[TTFTResult]] = {}
+    for r in ok:
+        grouped.setdefault((r.model_name, r.case_id), []).append(r)
+
+    if grouped:
+        lines.append("## Case Summary")
+        lines.append("")
+        lines.append("| Model | Engine | Case | Prompt | Cache | Avg TTFT | P50 | Min | Max | Avg Wall | Avg Mem Peak | Avg Swap Peak |")
+        lines.append("|-------|--------|------|--------|-------|---------:|----:|----:|----:|---------:|-------------:|--------------:|")
+        for (model_name, case_id), items in sorted(grouped.items()):
+            ttfts = [r.ttft_sec for r in items if r.ttft_sec is not None]
+            walls = [r.wall_sec for r in items]
+            avg_ttft, p50_ttft, min_ttft, max_ttft = _aggregate_numeric(ttfts)
+            avg_wall = sum(walls) / len(walls)
+            mem_peaks = [r.mem_peak_gb for r in items if r.mem_peak_gb is not None]
+            swap_peaks = [r.swap_peak_gb for r in items if r.swap_peak_gb is not None]
+            avg_mem_peak = (sum(mem_peaks) / len(mem_peaks)) if mem_peaks else None
+            avg_swap_peak = (sum(swap_peaks) / len(swap_peaks)) if swap_peaks else None
+            sample = items[0]
+            lines.append(
+                f"| {model_name} | {sample.engine} | {case_id} | {sample.prompt_size} | {sample.cache_state} "
+                f"| **{avg_ttft:.3f}s** | {p50_ttft:.3f}s | {min_ttft:.3f}s | {max_ttft:.3f}s | {avg_wall:.2f}s "
+                f"| {f'{avg_mem_peak:.1f}GB' if avg_mem_peak is not None else '-'} "
+                f"| {f'{avg_swap_peak:.1f}GB' if avg_swap_peak is not None else '-'} |"
+            )
+        lines.append("")
+
+        by_model: dict[str, dict[str, list[TTFTResult]]] = {}
+        for (model_name, case_id), items in grouped.items():
+            by_model.setdefault(model_name, {})[case_id] = items
+
+        lines.append("## Cache Impact")
+        lines.append("")
+        for model_name, case_map in sorted(by_model.items()):
+            short_cold = case_map.get("short_cold", [])
+            short_warm = case_map.get("short_warm", [])
+            long_cold = case_map.get("long_cold", [])
+            long_warm = case_map.get("long_warm", [])
+            lines.append(f"### {model_name}")
+            lines.append("")
+            if short_cold and short_warm:
+                cold_avg = _aggregate_numeric([r.ttft_sec for r in short_cold if r.ttft_sec is not None])[0]
+                warm_avg = _aggregate_numeric([r.ttft_sec for r in short_warm if r.ttft_sec is not None])[0]
+                gain = cold_avg / warm_avg if warm_avg > 0 else 0
+                lines.append(f"- Short prompt: cold **{cold_avg:.3f}s** vs warm **{warm_avg:.3f}s** ({gain:.2f}x)")
+            if long_cold and long_warm:
+                cold_avg = _aggregate_numeric([r.ttft_sec for r in long_cold if r.ttft_sec is not None])[0]
+                warm_avg = _aggregate_numeric([r.ttft_sec for r in long_warm if r.ttft_sec is not None])[0]
+                gain = cold_avg / warm_avg if warm_avg > 0 else 0
+                lines.append(f"- Long prompt: cold **{cold_avg:.3f}s** vs warm **{warm_avg:.3f}s** ({gain:.2f}x)")
+            lines.append("")
+
+    lines.append("## Raw Trials")
+    lines.append("")
+    lines.append("| Model | Engine | Case | Trial | TTFT | Wall | Tokens | Mem Peak | Swap Peak |")
+    lines.append("|-------|--------|------|------:|-----:|-----:|-------:|---------:|----------:|")
+    for r in results:
+        ttft = f"{r.ttft_sec:.3f}s" if r.ttft_sec is not None else "-"
+        mem_peak = f"{r.mem_peak_gb:.1f}GB" if r.mem_peak_gb is not None else "-"
+        swap_peak = f"{r.swap_peak_gb:.1f}GB" if r.swap_peak_gb is not None else "-"
+        lines.append(
+            f"| {r.model_name} | {r.engine} | {r.case_id} | {r.trial} | {ttft} | {r.wall_sec:.2f}s | {r.output_tokens} | {mem_peak} | {swap_peak} |"
+        )
+    lines.append("")
+
+    if failed:
+        lines.append("## Failed Trials")
+        lines.append("")
+        for r in failed:
+            lines.append(f"- **{r.model_name}** `{r.case_id}` trial {r.trial}: {r.error or 'no TTFT measured'}")
+        lines.append("")
+
     lines.append("## Raw Data")
     lines.append("")
     lines.append(f"- CSV: `{stem}.csv`")
@@ -1043,6 +1751,7 @@ def _resolve_platform(args) -> Platform:
 
 def main():
     known_names = list(KNOWN_PLATFORMS.keys())
+    suite_choices = list(SUITES.keys()) + ["ttft"]
     parser = argparse.ArgumentParser(
         description="GPU Model Bench — Standardized LLM benchmark for any compute platform",
     )
@@ -1052,7 +1761,7 @@ def main():
                         help="Model names to test (default: all compatible & available)")
     parser.add_argument("--engines", nargs="+", choices=["ollama", "vllm", "sglang"],
                         help="Only test these engines")
-    parser.add_argument("--suite", default="standard", choices=list(SUITES.keys()),
+    parser.add_argument("--suite", default="standard", choices=suite_choices,
                         help="Prompt suite (default: standard)")
     parser.add_argument("--list", action="store_true", help="List all models with compatibility info")
     parser.add_argument("--tag", default="", help="Tag for result files")
@@ -1060,6 +1769,14 @@ def main():
                         help="Run a warmup query before benchmarking each model")
     parser.add_argument("--no-filter", action="store_true",
                         help="Don't filter models by platform memory (show/test all)")
+    parser.add_argument("--matrix", action="store_true",
+                        help="Generate engine comparison matrix report after benchmark")
+    parser.add_argument("--matrix-group",
+                        help="Only benchmark models in this compare group (e.g. qwen3.5-35b)")
+    parser.add_argument("--ttft-runs", type=int, default=3,
+                        help="Trials per TTFT case (default: 3)")
+    parser.add_argument("--ttft-max-tokens", type=int, default=128,
+                        help="Max tokens to generate for TTFT suite (default: 128)")
     args = parser.parse_args()
 
     plat = _resolve_platform(args)
@@ -1087,6 +1804,9 @@ def main():
         candidates = [m for m in candidates if m.engine in args.engines]
     if args.models:
         candidates = [m for m in candidates if m.name in args.models]
+    if args.matrix_group:
+        args.matrix = True
+        candidates = [m for m in candidates if (m.compare_group or m.name) == args.matrix_group]
 
     # Filter by platform memory
     if not args.no_filter:
@@ -1116,6 +1836,39 @@ def main():
     if not available:
         print("\nNo available models to benchmark. Use --list to see all models.")
         sys.exit(1)
+
+    if args.suite == "ttft":
+        print(f"\n{'='*60}")
+        print("  GPU Model Bench")
+        print(f"  Platform: {plat.summary()}")
+        print(f"  Models:   {len(available)} available ({len(candidates)} compatible)")
+        print(f"  Suite:    ttft ({len(TTFT_CASES)} cases x {args.ttft_runs} trials)")
+        print(f"  Memory:   {get_memory_usage()}")
+        print(f"{'='*60}")
+
+        ttft_results = []
+        for i, model in enumerate(available, 1):
+            print(f"\n[{i}/{len(available)}] {model.name} ({model.engine}, {model.size_gb}GB {model.arch})...")
+            for case in TTFT_CASES:
+                print(f"  [{case['id']}]")
+                case_results = []
+                for trial in range(1, args.ttft_runs + 1):
+                    result = run_ttft_single(model, case, plat, trial, max_tokens=args.ttft_max_tokens)
+                    ttft_results.append(result)
+                    case_results.append(result)
+                    if result.error:
+                        print(f"    trial {trial}: ERROR: {result.error[:80]}")
+                    else:
+                        ttft = result.ttft_sec if result.ttft_sec is not None else result.wall_sec
+                        print(f"    trial {trial}: TTFT {ttft:.3f}s, wall {result.wall_sec:.2f}s")
+                ok_case = [r for r in case_results if r.ttft_sec is not None and not r.error]
+                if ok_case:
+                    avg_ttft = sum(r.ttft_sec for r in ok_case if r.ttft_sec is not None) / len(ok_case)
+                    print(f"    avg: {avg_ttft:.3f}s")
+
+        print_ttft_table(ttft_results)
+        save_ttft_results(ttft_results, plat, args.tag)
+        return
 
     prompts = SUITES[args.suite]
     print(f"\n{'='*60}")
@@ -1153,6 +1906,8 @@ def main():
 
     print_table(results)
     save_results(results, plat, args.tag)
+    if args.matrix:
+        save_matrix_report(results, plat, args.suite, args.tag)
 
 
 if __name__ == "__main__":

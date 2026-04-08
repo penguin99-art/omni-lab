@@ -1,0 +1,9 @@
+timestamp,platform_name,platform_gpu,platform_memory_gb,model_name,engine,case_id,prompt_size,cache_state,trial,system_prompt_chars,user_prompt_chars,ttft_sec,wall_sec,output_tokens,content_preview,error
+2026-04-08T12:29:19.218296,dgx-spark,GB10,122,gemma4:e2b,ollama,short_cold,short,cold,1,87,41,1.4182,1.42,128,,
+2026-04-08T12:29:20.636570,dgx-spark,GB10,122,gemma4:e2b,ollama,short_cold,short,cold,2,87,41,1.4738,1.47,128,,
+2026-04-08T12:29:22.110513,dgx-spark,GB10,122,gemma4:e2b,ollama,short_warm,short,warm,1,46,41,1.4058,1.41,128,,
+2026-04-08T12:29:23.921642,dgx-spark,GB10,122,gemma4:e2b,ollama,short_warm,short,warm,2,46,41,1.4797,1.48,128,,
+2026-04-08T12:29:25.878047,dgx-spark,GB10,122,gemma4:e2b,ollama,long_cold,long,cold,1,758,41,1.4951,1.5,128,,
+2026-04-08T12:29:27.373209,dgx-spark,GB10,122,gemma4:e2b,ollama,long_cold,long,cold,2,758,41,1.4831,1.48,128,,
+2026-04-08T12:29:28.856321,dgx-spark,GB10,122,gemma4:e2b,ollama,long_warm,long,warm,1,717,41,1.4769,1.48,128,,
+2026-04-08T12:29:31.790453,dgx-spark,GB10,122,gemma4:e2b,ollama,long_warm,long,warm,2,717,41,1.4463,1.45,128,,
