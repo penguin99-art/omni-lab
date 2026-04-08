@@ -39,12 +39,14 @@ python3 bench/bench.py --platform jetson-agx-orin-64 --list
 # quick    — 1 prompt, 30秒, 快速筛选
 python3 bench/bench.py --models "qwen3.5:35b" --suite quick
 
-# standard — 5 prompts (推理/代码/中文/长文), 完整评测
+# standard — 5 prompts (推理/代码/中文/长文), 完整评测 + 自动质量评分
 python3 bench/bench.py --models "qwen3.5:35b" --suite standard
 
 # toolcall — 工具调用 (原生 tools API)
 python3 bench/bench.py --models "qwen3.5:35b" --suite toolcall
 ```
+
+`standard` 报告会为每个 prompt 自动生成 `quality_score`，并汇总为模型综合排名。
 
 ### TTFT 对比测试
 
@@ -68,7 +70,7 @@ bench.py --platform auto
     └── 6. 自动生成报告 → results/{platform}/
         ├── bench_YYYYMMDD_HHMMSS.csv    # 原始数据
         ├── bench_YYYYMMDD_HHMMSS.json   # 结构化数据
-        └── bench_YYYYMMDD_HHMMSS.md     # 自动报告 (排行榜 + 分析)
+        └── bench_YYYYMMDD_HHMMSS.md     # 自动报告 (速度榜 + 质量榜 + 分析)
 ```
 
 ---
@@ -149,10 +151,21 @@ python3 bench/bench.py --suite quick   # 跑起来
 
 | 报告 | 内容 |
 |------|------|
+| [使用指南](bench/USAGE.md) | 从 0 到 1 跑一遍 benchmark 的操作手册 |
 | [测试方法论](bench/PLAN.md) | 测试套件、流程、指标定义、支持平台 |
 | [Round 1: Qwen 系列基线](bench/RESULTS.md) | qwen3.5 全系列 (DGX Spark) |
 | [Round 2: Gemma 4 vs Qwen](bench/RESULTS_R2.md) | 5 模型全维度对比 (DGX Spark) |
 | [gemma4:26b vs qwen3.5:35b](bench/COMPARE_gemma4_26b_vs_qwen35.md) | 深度对比报告 |
+
+### 自动报告内容
+
+每次 benchmark 跑完会自动生成 Markdown 报告，包含：
+
+1. 总体综合排名（平均质量优先，速度为辅）
+2. 每个 prompt 的速度/质量排行榜
+3. Key Findings（最快、最低 TTFT、最高效率、最佳单项质量）
+4. MoE vs Dense 对比
+5. 失败模型与错误原因
 
 ## 项目结构
 
@@ -163,6 +176,7 @@ python3 bench/bench.py --suite quick   # 跑起来
 │   ├── setup_models.sh             #   模型下载 & 引擎环境搭建
 │   ├── start_vllm_fp8.sh           #   vLLM FP8 容器启动
 │   ├── PLAN.md                     #   测试方法论
+│   ├── USAGE.md                    #   使用指南 / 实战流程
 │   └── results/                    #   原始数据 + 自动报告 (按平台分目录)
 │       ├── dgx-spark/              #     DGX Spark (CSV + JSON + MD 报告)
 │       └── {platform}/             #     其他平台数据

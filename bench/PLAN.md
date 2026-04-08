@@ -54,6 +54,8 @@ python3 bench/bench.py --models "模型名" --suite quick
 python3 bench/bench.py --models "模型名" --suite standard
 ```
 
+`standard` 套件会基于启发式规则自动产出 `quality_score`，用于区分“速度快但回答质量弱”和“速度稍慢但结果更稳”的模型。
+
 ### toolcall — 工具调用 (2 prompts)
 
 | Prompt ID | 测试内容 | 验证方式 |
@@ -114,6 +116,7 @@ Step 6: 结果汇总 (全自动)
 | **wall_sec** | 端到端耗时 | 用户真实等待时间 |
 | **output_tokens** | 输出 token 数 | 含 thinking tokens (Qwen) |
 | **tok/s per GB** | 内存效率 | tok/s ÷ 模型大小 |
+| **quality_score** | 启发式质量分 (0-1) | 按 prompt 规则自动打分 |
 | **tool_call_correct** | 工具调用正确率 | API 返回的 tool_calls 结构是否正确 |
 
 ## 结果目录结构
@@ -141,10 +144,11 @@ bench/results/
 
 1. **平台概要** — GPU、内存、带宽、CUDA 版本
 2. **排行榜** — 按 tok/s 排序，奖牌标记 (🥇🥈🥉)，含 tok/s per GB 效率指标
-3. **Key Findings** — 自动识别最快模型、最低 TTFT、最高效率、MoE vs Dense 对比
-4. **架构对比表** — MoE vs Dense 的 avg tok/s、TTFT、效率
-5. **失败模型列表** — 附错误原因 (如 Ollama 版本不兼容)
-6. **原始数据引用** — 对应 CSV/JSON 文件名
+3. **综合排名** — 按平均质量优先、速度为辅进行模型排序
+4. **Key Findings** — 自动识别最快模型、最低 TTFT、最高效率、最佳单项质量、MoE vs Dense 对比
+5. **架构对比表** — MoE vs Dense 的 avg tok/s、TTFT、效率、质量
+6. **失败模型列表** — 附错误原因 (如 Ollama 版本不兼容)
+7. **原始数据引用** — 对应 CSV/JSON 文件名
 
 ## 关键发现 (跨平台通用经验)
 
@@ -177,6 +181,7 @@ bench/results/
 
 ```
 bench/
+├── USAGE.md                        # 使用指南 / 实际操作流程
 ├── PLAN.md                         # 本文件：测试方法论
 ├── bench.py                        # 核心: 平台检测 + 标准化 benchmark
 ├── setup_models.sh                 # 模型下载和引擎环境搭建

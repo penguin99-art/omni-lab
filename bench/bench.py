@@ -594,6 +594,109 @@ def call_openai_compat(base_url: str, model_id: str, messages: list,
     }
 
 
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _score_output_length(output_tokens: int, expected_min_tokens: int) -> float:
+    if expected_min_tokens <= 0:
+        return 1.0
+    return _clamp01(output_tokens / expected_min_tokens)
+
+
+def _score_quality(prompt: dict, content: str, output_tokens: int,
+                   tool_call_correct: bool) -> tuple[float, str]:
+    """Heuristic quality scoring for benchmark prompts."""
+    prompt_id = prompt["id"]
+    expected_min_tokens = prompt.get("expected_min_tokens", 0)
+    text = (content or "").strip()
+    text_lower = text.lower()
+
+    if not text and not tool_call_correct:
+        return 0.0, "empty output"
+
+    if prompt["type"] == "tool_call":
+        return (1.0, "tool call emitted") if tool_call_correct else (0.0, "missing tool call")
+
+    if prompt_id == "hello":
+        greeting_hits = {
+            name for name, pattern in {
+                "english": r"\bhello\b|\bhi\b",
+                "spanish": r"\bhola\b",
+                "french": r"\bbonjour\b|\bsalut\b",
+                "japanese": r"こんにちは|konnichiwa",
+                "chinese": r"你好|您好",
+                "german": r"\bhallo\b",
+            }.items()
+            if re.search(pattern, text_lower)
+        }
+        score = 0.7 * _clamp01(len(greeting_hits) / 3) + 0.3 * _score_output_length(output_tokens, expected_min_tokens)
+        return round(score, 2), f"{len(greeting_hits)} greetings recognized"
+
+    if prompt_id == "reasoning":
+        has_nine = bool(re.search(r"\b9\b", text))
+        mentions_logic = any(x in text_lower for x in ["all but 9", "run away", "left", "remain"])
+        wrong_shortcut = bool(re.search(r"\b8\b", text)) and not has_nine
+        score = 0.0
+        if has_nine:
+            score += 0.75
+        if mentions_logic:
+            score += 0.2
+        if output_tokens >= expected_min_tokens:
+            score += 0.05
+        if wrong_shortcut:
+            score = min(score, 0.2)
+        note = "correct answer 9" if has_nine else "answer unclear"
+        return round(_clamp01(score), 2), note
+
+    if prompt_id == "code":
+        has_def = "def " in text
+        has_type_hints = "->" in text
+        has_docstring = '"""' in text or "'''" in text
+        mentions_palindrome = "palindrome" in text_lower or "palindromic" in text_lower
+        score = (
+            0.3 * has_def +
+            0.2 * has_type_hints +
+            0.2 * has_docstring +
+            0.1 * mentions_palindrome +
+            0.2 * _score_output_length(output_tokens, expected_min_tokens)
+        )
+        parts = []
+        if has_def:
+            parts.append("function")
+        if has_type_hints:
+            parts.append("type hints")
+        if has_docstring:
+            parts.append("docstring")
+        return round(_clamp01(score), 2), ", ".join(parts) if parts else "structure incomplete"
+
+    if prompt_id == "long_output":
+        length_score = _score_output_length(output_tokens, expected_min_tokens)
+        mentions_topic = all(term in text_lower for term in ["edge", "ai"])
+        score = 0.8 * length_score + 0.2 * float(mentions_topic)
+        note = f"{output_tokens}/{expected_min_tokens} tokens"
+        return round(_clamp01(score), 2), note
+
+    if prompt_id == "chinese":
+        cjk_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
+        has_moe = "moe" in text_lower or "混合专家" in text
+        has_dense = "dense" in text_lower or "稠密" in text
+        has_pros = "优势" in text or "优点" in text
+        has_cons = "劣势" in text or "缺点" in text
+        score = (
+            0.3 * _clamp01(cjk_chars / 80) +
+            0.2 * has_moe +
+            0.2 * has_dense +
+            0.15 * has_pros +
+            0.15 * has_cons
+        )
+        note = f"{cjk_chars} CJK chars"
+        return round(_clamp01(score), 2), note
+
+    score = _score_output_length(output_tokens, expected_min_tokens)
+    return round(score, 2), f"{output_tokens}/{expected_min_tokens} tokens"
+
+
 # ---------------------------------------------------------------------------
 # Benchmark runner
 # ---------------------------------------------------------------------------
@@ -618,8 +721,10 @@ class BenchResult:
     wall_sec: float
     tool_calls_count: int
     tool_call_correct: bool
-    content_preview: str
-    community_toks: Optional[float]
+    quality_score: float = 0.0
+    quality_notes: str = ""
+    content_preview: str = ""
+    community_toks: Optional[float] = None
     error: str = ""
 
 
@@ -650,6 +755,12 @@ def run_single(model: ModelConfig, prompt: dict, plat: Platform) -> BenchResult:
         tc_correct = False
         if prompt["type"] == "tool_call" and tc:
             tc_correct = True
+        quality_score, quality_notes = _score_quality(
+            prompt,
+            result.get("content", ""),
+            result["output_tokens"],
+            tc_correct,
+        )
 
         return BenchResult(
             timestamp=ts,
@@ -668,6 +779,8 @@ def run_single(model: ModelConfig, prompt: dict, plat: Platform) -> BenchResult:
             wall_sec=round(result["wall_sec"], 2),
             tool_calls_count=len(tc),
             tool_call_correct=tc_correct,
+            quality_score=quality_score,
+            quality_notes=quality_notes,
             content_preview=result["content"][:200].replace("\n", " "),
             community_toks=model.community_toks,
         )
@@ -689,6 +802,8 @@ def run_single(model: ModelConfig, prompt: dict, plat: Platform) -> BenchResult:
             wall_sec=0,
             tool_calls_count=0,
             tool_call_correct=False,
+            quality_score=0.0,
+            quality_notes="request failed",
             content_preview="",
             community_toks=model.community_toks,
             error=str(e)[:200],
@@ -717,19 +832,20 @@ def print_table(results: list[BenchResult]):
     if not results:
         return
 
-    print("\n" + "=" * 110)
+    print("\n" + "=" * 118)
     print(f"{'Model':<30} {'Engine':<8} {'Prompt':<14} {'tok/s':>7} {'TTFT':>7} "
-          f"{'Wall':>7} {'OutTok':>7} {'Cmty':>6} {'TC':>3}")
-    print("-" * 110)
+          f"{'Wall':>7} {'OutTok':>7} {'Qual':>5} {'Cmty':>6} {'TC':>3}")
+    print("-" * 118)
     for r in results:
         ttft = f"{r.ttft_sec:.2f}s" if r.ttft_sec else "  -"
         cmty = f"{r.community_toks:.0f}" if r.community_toks else " -"
         tc = "✓" if r.tool_call_correct else ("✗" if r.prompt_type == "tool_call" else "-")
         err = " ⚠" if r.error else ""
+        quality = f"{r.quality_score:.2f}"
         print(f"{r.model_name:<30} {r.engine:<8} {r.prompt_id:<14} "
               f"{r.tok_per_sec:>6.1f} {ttft:>7} {r.wall_sec:>6.1f}s "
-              f"{r.output_tokens:>6} {cmty:>6} {tc:>3}{err}")
-    print("=" * 110)
+              f"{r.output_tokens:>6} {quality:>5} {cmty:>6} {tc:>3}{err}")
+    print("=" * 118)
 
 
 def save_results(results: list[BenchResult], plat: Platform, tag: str = ""):
@@ -780,6 +896,37 @@ def _generate_report(results: list[BenchResult], plat: Platform,
         f"",
     ]
 
+    if ok:
+        by_model: dict[str, list[BenchResult]] = {}
+        for r in ok:
+            by_model.setdefault(r.model_name, []).append(r)
+
+        model_rows = []
+        max_speed = max(r.tok_per_sec for r in ok) if ok else 1.0
+        for model_name, model_results in by_model.items():
+            avg_quality = sum(r.quality_score for r in model_results) / len(model_results)
+            avg_speed = sum(r.tok_per_sec for r in model_results) / len(model_results)
+            avg_ttft_vals = [r.ttft_sec for r in model_results if r.ttft_sec is not None]
+            avg_ttft = sum(avg_ttft_vals) / len(avg_ttft_vals) if avg_ttft_vals else None
+            composite = 0.7 * avg_quality + 0.3 * (avg_speed / max_speed)
+            sample = model_results[0]
+            model_rows.append((model_name, sample, avg_quality, avg_speed, avg_ttft, composite))
+
+        model_rows.sort(key=lambda row: (row[5], row[2], row[3]), reverse=True)
+
+        lines.append("## Overall Ranking")
+        lines.append("")
+        lines.append("| # | Model | Engine | Arch | Avg quality | Avg tok/s | Avg TTFT | Composite |")
+        lines.append("|---|-------|--------|------|------------:|----------:|---------:|----------:|")
+        for i, (model_name, sample, avg_quality, avg_speed, avg_ttft, composite) in enumerate(model_rows, 1):
+            medal = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{i}"))
+            ttft = f"{avg_ttft:.2f}s" if avg_ttft is not None else "-"
+            lines.append(
+                f"| {medal} | {model_name} | {sample.engine} | {sample.arch} "
+                f"| **{avg_quality:.2f}** | {avg_speed:.1f} | {ttft} | {composite:.2f} |"
+            )
+        lines.append("")
+
     for pid in prompt_ids:
         pid_results = [r for r in ok if r.prompt_id == pid]
         if not pid_results:
@@ -789,8 +936,8 @@ def _generate_report(results: list[BenchResult], plat: Platform,
 
         lines.append(f"## Prompt: `{pid}`")
         lines.append("")
-        lines.append("| # | Model | Engine | Arch | Size | tok/s | TTFT | Wall | Tokens | tok/s per GB |")
-        lines.append("|---|-------|--------|------|------|------:|-----:|-----:|-------:|-------------:|")
+        lines.append("| # | Model | Engine | Arch | Size | tok/s | TTFT | Wall | Tokens | Quality | tok/s per GB |")
+        lines.append("|---|-------|--------|------|------|------:|-----:|-----:|-------:|--------:|-------------:|")
 
         for i, r in enumerate(ranked, 1):
             ttft = f"{r.ttft_sec:.2f}s" if r.ttft_sec else "-"
@@ -799,7 +946,7 @@ def _generate_report(results: list[BenchResult], plat: Platform,
             lines.append(
                 f"| {medal} | {r.model_name} | {r.engine} | {r.arch} "
                 f"| {r.size_gb:.0f}GB | **{r.tok_per_sec:.1f}** | {ttft} "
-                f"| {r.wall_sec:.1f}s | {r.output_tokens} | {tpg:.1f} |"
+                f"| {r.wall_sec:.1f}s | {r.output_tokens} | {r.quality_score:.2f} | {tpg:.1f} |"
             )
         lines.append("")
 
@@ -820,6 +967,11 @@ def _generate_report(results: list[BenchResult], plat: Platform,
         eff_val = best_eff.tok_per_sec / best_eff.size_gb if best_eff.size_gb > 0 else 0
         lines.append(f"- **Best efficiency** (tok/s per GB): {best_eff.model_name} "
                       f"@ **{eff_val:.1f} tok/s/GB**")
+
+        best_quality = max(ok, key=lambda r: r.quality_score)
+        lines.append(f"- **Best single-prompt quality**: {best_quality.model_name} "
+                      f"on `{best_quality.prompt_id}` @ **{best_quality.quality_score:.2f}** "
+                      f"({best_quality.quality_notes})")
 
         moe = [r for r in ok if r.arch == "moe"]
         dense = [r for r in ok if r.arch == "dense"]
@@ -852,6 +1004,9 @@ def _generate_report(results: list[BenchResult], plat: Platform,
         avg_moe_eff = sum(r.tok_per_sec / r.size_gb for r in moe_ok if r.size_gb > 0) / len(moe_ok)
         avg_dense_eff = sum(r.tok_per_sec / r.size_gb for r in dense_ok if r.size_gb > 0) / len(dense_ok)
         lines.append(f"| Avg tok/s/GB | {avg_moe_eff:.1f} | {avg_dense_eff:.1f} |")
+        avg_moe_quality = sum(r.quality_score for r in moe_ok) / len(moe_ok)
+        avg_dense_quality = sum(r.quality_score for r in dense_ok) / len(dense_ok)
+        lines.append(f"| Avg quality | {avg_moe_quality:.2f} | {avg_dense_quality:.2f} |")
         lines.append(f"| Count | {len(moe_ok)} | {len(dense_ok)} |")
         lines.append("")
 
