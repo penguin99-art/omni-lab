@@ -1,0 +1,4 @@
+# Model weights (download at runtime)
+*.onnx
+*.bin
+__pycache__/

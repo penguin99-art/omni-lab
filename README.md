@@ -65,6 +65,22 @@ python3 bench/bench.py --suite quick --matrix --matrix-group qwen3.5-35b
 python3 bench/bench.py --models "gemma4:e2b" --suite ttft --ttft-runs 3
 ```
 
+### 实时语音 + 视觉 Demo
+
+仓库里包含一个 Parlor 风格的实时语音+视觉 AI demo，放在 `cases/realtime-demo`：
+
+```bash
+pip3 install --user --break-system-packages -r cases/realtime-demo/requirements.txt
+python3 cases/realtime-demo/server.py
+# 打开 http://127.0.0.1:8010
+```
+
+- 浏览器 Silero VAD + 麦克风 + 摄像头
+- 服务端 ASR (faster-whisper, 简体中文) → Ollama 流式推理 → TTS 语音回复
+- 支持中英文自动切换语音 (Edge TTS / Kokoro)、打断 (barge-in)、对话记忆
+- 默认模型 `gemma4:e2b`，自动回退到 `gemma4:e4b` / `gemma4:26b`
+- 详见 [Realtime Demo README](cases/realtime-demo/README.md)
+
 ---
 
 ## 工作原理
@@ -168,6 +184,7 @@ python3 bench/bench.py --suite quick   # 跑起来
 | [Round 1: Qwen 系列基线](bench/RESULTS.md) | qwen3.5 全系列 (DGX Spark) |
 | [Round 2: Gemma 4 vs Qwen](bench/RESULTS_R2.md) | 5 模型全维度对比 (DGX Spark) |
 | [gemma4:26b vs qwen3.5:35b](bench/COMPARE_gemma4_26b_vs_qwen35.md) | 深度对比报告 |
+| [Realtime Demo](cases/realtime-demo/README.md) | 本地语音 + 视觉 + 打断 demo 使用说明 |
 
 ### 自动报告内容
 
@@ -194,7 +211,8 @@ python3 bench/bench.py --suite quick   # 跑起来
 │       ├── dgx-spark/              #     DGX Spark (CSV + JSON + MD 报告)
 │       └── {platform}/             #     其他平台数据
 │
-├── cases/                          # 过往实验
+├── cases/                          # Demo / 过往实验
+│   └── realtime-demo/              #   Parlor 风格本地语音+视觉 demo
 ├── models/                         # 模型权重 (本地, 不提交)
 └── llama.cpp-omni/                 # git submodule
 ```

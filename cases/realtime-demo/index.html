@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Realtime Voice + Vision</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css?v=2">
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-mark"></div>
+      <h1>Realtime Demo</h1>
+    </div>
+    <span class="model-label" id="modelLabel">Loading...</span>
+    <span class="status-pill" id="statusPill">Disconnected</span>
+  </header>
+
+  <main class="portal-stack">
+    <!-- Camera viewport with state glow -->
+    <div class="viewport-wrap loading" id="viewportWrap">
+      <div class="viewport-glow"></div>
+      <video id="video" autoplay muted playsinline></video>
+    </div>
+
+    <!-- Waveform visualizer -->
+    <div class="waveform-wrap">
+      <canvas id="waveform"></canvas>
+    </div>
+
+    <!-- Transcript -->
+    <div class="transcript" id="messages"></div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <button class="ctrl-btn active" id="cameraToggle">Camera On</button>
+      <div class="text-composer">
+        <input type="text" id="textInput" placeholder="Type a message..." autocomplete="off">
+        <button class="ctrl-btn" id="sendBtn">Send</button>
+      </div>
+      <div class="state-indicator">
+        <div class="dot loading" id="stateDot"></div>
+        <span id="stateText">Loading...</span>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/bundle.min.js"></script>
+  <script src="/static/app.js?v=2"></script>
+</body>
+</html>
