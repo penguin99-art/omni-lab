@@ -47,6 +47,24 @@ class DemoConfig:
     jpeg_quality: float = float(os.environ.get("REALTIME_DEMO_JPEG_QUALITY", "0.65"))
     sentence_flush_chars: int = int(os.environ.get("REALTIME_DEMO_SENTENCE_FLUSH_CHARS", "220"))
 
+    # Proactive vision — periodically analyse camera for changes
+    proactive_vision: bool = os.environ.get("REALTIME_DEMO_PROACTIVE_VISION", "").lower() in {"1", "true", "yes"}
+    proactive_interval_s: int = int(os.environ.get("REALTIME_DEMO_PROACTIVE_INTERVAL", "5"))
+    proactive_diff_threshold: float = float(os.environ.get("REALTIME_DEMO_PROACTIVE_DIFF_THRESHOLD", "0.06"))
+    proactive_cooldown_s: int = int(os.environ.get("REALTIME_DEMO_PROACTIVE_COOLDOWN", "15"))
+    proactive_prompt: str = os.environ.get(
+        "REALTIME_DEMO_PROACTIVE_PROMPT",
+        (
+            "Look at this camera frame carefully. "
+            "If you notice something interesting, notable, or changed "
+            "(like a person appeared/left, an object was moved, a gesture, "
+            "a new item on screen, etc.), briefly describe what you see "
+            "in 1-2 concise sentences in the user's language. "
+            "If the user speaks Chinese, reply in Simplified Chinese. "
+            "If nothing notable or interesting is happening, respond with exactly: __SKIP__"
+        ),
+    )
+
     @property
     def public(self) -> dict:
         return {
@@ -58,6 +76,10 @@ class DemoConfig:
             "tts_backend": self.tts_backend,
             "asr_backend": self.asr_backend,
             "whisper_language": self.whisper_language,
+            "proactive_vision": self.proactive_vision,
+            "proactive_interval_s": self.proactive_interval_s,
+            "proactive_diff_threshold": self.proactive_diff_threshold,
+            "proactive_cooldown_s": self.proactive_cooldown_s,
         }
 
 

@@ -40,6 +40,17 @@ const BARGE_IN_GRACE_MS = 800;
 
 // Streaming assistant text
 let assistantBubble = null;
+let observationBubble = null;
+
+// Proactive vision state
+let watchEnabled = false;
+let watchTimer = null;
+let prevFrameData = null;
+let proactiveConfig = {
+  interval_s: 5,
+  diff_threshold: 0.06,
+};
+const watchToggle = $("watchToggle");
 
 // Waveform
 const BAR_COUNT = 40;
@@ -348,18 +359,24 @@ function connect() {
 
     if (msg.type === "ready") {
       modelLabel.textContent = msg.config?.model_name || "unknown";
+      if (msg.config) {
+        if (msg.config.proactive_interval_s) proactiveConfig.interval_s = msg.config.proactive_interval_s;
+        if (msg.config.proactive_diff_threshold) proactiveConfig.diff_threshold = msg.config.proactive_diff_threshold;
+      }
       return;
     }
 
     if (msg.type === "status") {
       if (msg.phase === "transcribing") setState("processing");
       else if (msg.phase === "thinking") setState("processing");
+      else if (msg.phase === "watching") {
+        setStatus("processing", "Watching...");
+      }
       return;
     }
 
     if (msg.type === "text") {
       if (msg.transcription) {
-        // Update the loading-dots placeholder with actual transcription
         const userMsgs = messagesDiv.querySelectorAll(".msg.user");
         const lastUser = userMsgs[userMsgs.length - 1];
         if (lastUser) {
@@ -368,14 +385,37 @@ function connect() {
         }
       }
       if (msg.text && msg.llm_time !== undefined) {
-        // Final assistant response with timing
         finalizeAssistant(msg.text, `LLM ${msg.llm_time}s`);
       }
       return;
     }
 
     if (msg.type === "assistant_token") {
-      updateAssistantToken(msg.text);
+      if (msg.proactive) {
+        updateObservationToken(msg.text);
+      } else {
+        updateAssistantToken(msg.text);
+      }
+      return;
+    }
+
+    if (msg.type === "proactive_observation") {
+      if (msg.text) {
+        finalizeObservation(msg.text, msg.llm_time ? `LLM ${msg.llm_time}s` : "");
+      } else {
+        observationBubble = null;
+      }
+      if (appState !== "speaking") {
+        setState("listening");
+        setStatus("connected", "Connected");
+      }
+      return;
+    }
+
+    if (msg.type === "proactive_status") {
+      watchEnabled = msg.enabled;
+      watchToggle.classList.toggle("watching", watchEnabled);
+      watchToggle.textContent = watchEnabled ? "Watch On" : "Watch Off";
       return;
     }
 
@@ -399,7 +439,8 @@ function connect() {
         return;
       }
       if (msg.tts_time !== undefined) {
-        const meta = messagesDiv.querySelector(".msg.assistant:last-child .meta");
+        const lastBubble = observationBubble || messagesDiv.querySelector(".msg.assistant:last-child, .msg.observation:last-child");
+        const meta = lastBubble ? lastBubble.querySelector(".meta") : null;
         if (meta) meta.textContent += ` \u00b7 TTS ${msg.tts_time}s`;
       }
       return;
@@ -466,6 +507,117 @@ function finalizeAssistant(text, meta) {
   }
   assistantBubble = null;
 }
+
+function updateObservationToken(text) {
+  if (!observationBubble) {
+    observationBubble = addMessage("observation", "");
+  }
+  const span = observationBubble.querySelector(".msg-text");
+  if (span) {
+    span.textContent += text;
+  }
+  messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
+function finalizeObservation(text, meta) {
+  if (!observationBubble) {
+    observationBubble = addMessage("observation", text, meta);
+  } else {
+    const span = observationBubble.querySelector(".msg-text");
+    if (span) span.textContent = text;
+    if (meta) {
+      const m = document.createElement("div");
+      m.className = "meta";
+      m.textContent = meta;
+      observationBubble.appendChild(m);
+    }
+  }
+  observationBubble = null;
+}
+
+// ─────────────────────────────────────────
+// Proactive Vision — frame diff + periodic watch
+// ─────────────────────────────────────────
+
+function captureFrameImageData() {
+  if (!cameraEnabled || !video.videoWidth) return null;
+  const canvas = document.createElement("canvas");
+  const scale = 160 / video.videoWidth;
+  canvas.width = 160;
+  canvas.height = Math.round(video.videoHeight * scale);
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+function computeFrameDiff(prevData, currData) {
+  const prev = prevData.data;
+  const curr = currData.data;
+  const len = prev.length;
+  let totalDiff = 0;
+  for (let i = 0; i < len; i += 4) {
+    const grayPrev = prev[i] * 0.299 + prev[i + 1] * 0.587 + prev[i + 2] * 0.114;
+    const grayCurr = curr[i] * 0.299 + curr[i + 1] * 0.587 + curr[i + 2] * 0.114;
+    totalDiff += Math.abs(grayPrev - grayCurr) / 255;
+  }
+  return totalDiff / (len / 4);
+}
+
+function proactiveVisionTick() {
+  if (!watchEnabled || appState !== "listening") return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  const currFrame = captureFrameImageData();
+  if (!currFrame) return;
+
+  if (!prevFrameData) {
+    prevFrameData = currFrame;
+    return;
+  }
+
+  const diff = computeFrameDiff(prevFrameData, currFrame);
+  prevFrameData = currFrame;
+
+  if (diff > proactiveConfig.diff_threshold) {
+    const imageBase64 = captureFrame();
+    if (imageBase64) {
+      console.log(`[watch] Frame diff ${diff.toFixed(4)} > ${proactiveConfig.diff_threshold}, sending`);
+      ws.send(JSON.stringify({ type: "vision_watch", image: imageBase64 }));
+    }
+  }
+}
+
+function startWatchLoop() {
+  stopWatchLoop();
+  watchTimer = setInterval(proactiveVisionTick, proactiveConfig.interval_s * 1000);
+  console.log(`[watch] Started, interval=${proactiveConfig.interval_s}s, threshold=${proactiveConfig.diff_threshold}`);
+}
+
+function stopWatchLoop() {
+  if (watchTimer) {
+    clearInterval(watchTimer);
+    watchTimer = null;
+  }
+  prevFrameData = null;
+}
+
+function toggleWatch() {
+  watchEnabled = !watchEnabled;
+  watchToggle.classList.toggle("watching", watchEnabled);
+  watchToggle.textContent = watchEnabled ? "Watch On" : "Watch Off";
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "proactive_toggle", enabled: watchEnabled }));
+  }
+
+  if (watchEnabled) {
+    startWatchLoop();
+  } else {
+    stopWatchLoop();
+  }
+}
+
+watchToggle.addEventListener("click", toggleWatch);
 
 // ─────────────────────────────────────────
 // Camera

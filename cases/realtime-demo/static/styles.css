@@ -268,6 +268,20 @@ video {
   font-size: 12px;
 }
 
+.msg.observation {
+  align-self: flex-start;
+  background: rgba(129,140,248,0.06);
+  color: #a5b0e8;
+  border: 1px dashed rgba(129,140,248,0.2);
+  border-bottom-left-radius: 4px;
+  font-size: 13px;
+}
+
+.msg.observation::before {
+  content: '\1F441 ';
+  font-size: 14px;
+}
+
 .msg .meta {
   font-size: 10.5px;
   color: var(--c-text-dim);
@@ -331,6 +345,11 @@ video {
   background: var(--c-listen-dim);
   color: var(--c-listen);
   border-color: rgba(74,222,128,0.15);
+}
+.ctrl-btn.watching {
+  background: rgba(129,140,248,0.12);
+  color: #818cf8;
+  border-color: rgba(129,140,248,0.2);
 }
 
 .text-composer {

@@ -78,6 +78,7 @@ python3 cases/realtime-demo/server.py
 - 浏览器 Silero VAD + 麦克风 + 摄像头
 - 服务端 ASR (faster-whisper, 简体中文) → Ollama 流式推理 → TTS 语音回复
 - 支持中英文自动切换语音 (Edge TTS / Kokoro)、打断 (barge-in)、对话记忆
+- **主动视觉**：开启 Watch 后定时截帧 → 帧差异检测 → 画面变化时自动语音播报
 - 默认模型 `gemma4:e2b`，自动回退到 `gemma4:e4b` / `gemma4:26b`
 - 详见 [Realtime Demo README](cases/realtime-demo/README.md)
 

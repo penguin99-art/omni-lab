@@ -86,6 +86,8 @@ class SessionState:
     active_thread: threading.Thread | None = None
     ws_closed: bool = False
     conversation: list[dict] = field(default_factory=list)
+    last_proactive_time: float = 0.0
+    proactive_enabled: bool = False
 
     def cancel_current(self) -> bool:
         if self.active_cancel and not self.active_cancel.is_set():
@@ -171,6 +173,7 @@ class OllamaBridge:
 
 
 BRIDGE = OllamaBridge(CONFIG.ollama_host, CONFIG.model_name, CONFIG.fallback_models, CONFIG.system_prompt)
+PROACTIVE_BRIDGE = OllamaBridge(CONFIG.ollama_host, CONFIG.model_name, CONFIG.fallback_models, CONFIG.proactive_prompt)
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +340,91 @@ def _tts_sentence(ws, state: SessionState, cancel: threading.Event,
 
 
 # ---------------------------------------------------------------------------
+# Proactive vision turn
+# ---------------------------------------------------------------------------
+
+def start_proactive_turn(ws, state: SessionState, image_b64: str):
+    """Start a proactive vision turn if conditions are met (cooldown, not busy)."""
+    now = time.time()
+    if now - state.last_proactive_time < CONFIG.proactive_cooldown_s:
+        return
+    if state.active_thread and state.active_thread.is_alive():
+        return
+    state.last_proactive_time = now
+    cancel = threading.Event()
+    state.active_cancel = cancel
+    t = threading.Thread(target=run_proactive_turn, args=(ws, state, cancel, image_b64), daemon=True)
+    state.active_thread = t
+    t.start()
+
+
+def run_proactive_turn(ws, state: SessionState, cancel: threading.Event, image_b64: str):
+    turn = "p-" + uuid.uuid4().hex[:10]
+    sid = state.session_id
+
+    try:
+        log_line("proactive_start", session=sid, turn=turn)
+
+        prompt_text = "Describe what you see."
+        t0 = time.time()
+
+        # Buffer the full LLM response before deciding to show or skip
+        full_text = ""
+        for ev in PROACTIVE_BRIDGE.stream_reply(prompt_text, image_b64, [], cancel):
+            if cancel.is_set():
+                raise GenerationCancelled()
+            full_text += ev["content"]
+            if "__SKIP__" in full_text or "_SKIP" in full_text:
+                log_line("proactive_skip", session=sid, turn=turn)
+                return
+
+        llm_time = time.time() - t0
+        clean = full_text.replace("__SKIP__", "").strip()
+
+        if not clean or "__SKIP" in full_text or len(clean) < 3:
+            log_line("proactive_skip", session=sid, turn=turn)
+            return
+
+        # Got a real observation — send text + TTS to client
+        log_line("proactive_observation", session=sid, turn=turn,
+                 text=_preview(clean, 120), llm_s=f"{llm_time:.2f}")
+
+        send_event(ws, state, {"type": "proactive_observation", "text": clean,
+                                "llm_time": round(llm_time, 2)})
+
+        # TTS the observation
+        audio_started = False
+        tts_idx = 0
+        tts_t0 = time.time()
+        remaining = clean
+        while remaining and not cancel.is_set():
+            remaining, sentences = extract_sentences(remaining, CONFIG.sentence_flush_chars)
+            if not sentences and remaining:
+                sentences = [remaining]
+                remaining = ""
+            for sentence in sentences:
+                if cancel.is_set():
+                    raise GenerationCancelled()
+                audio_started = _tts_sentence(ws, state, cancel, sentence, turn, audio_started, tts_idx)
+                tts_idx += 1
+
+        if audio_started and not cancel.is_set():
+            tts_time = round(time.time() - tts_t0, 2)
+            send_event(ws, state, {"type": "audio_end", "tts_time": tts_time})
+
+    except GenerationCancelled:
+        log_line("proactive_cancelled", session=sid, turn=turn)
+        if audio_started:
+            send_event(ws, state, {"type": "audio_end"})
+    except Exception as exc:
+        log_line("proactive_error", session=sid, turn=turn, err=str(exc))
+    finally:
+        state.active_cancel = None
+        state.active_thread = None
+        log_line("proactive_end", session=sid, turn=turn)
+
+
+# ---------------------------------------------------------------------------
 # HTTP routes
 # ---------------------------------------------------------------------------
 
@@ -407,6 +495,19 @@ def websocket(ws):
             if state.cancel_current():
                 log_line("barge_in", session=state.session_id)
                 send_event(ws, state, {"type": "audio_end"})
+        elif msg_type == "vision_watch":
+            if state.proactive_enabled:
+                img = data.get("image", "")
+                if img:
+                    start_proactive_turn(ws, state, img)
+
+        elif msg_type == "proactive_toggle":
+            state.proactive_enabled = bool(data.get("enabled", False))
+            log_line("proactive_toggle", session=state.session_id,
+                     enabled=state.proactive_enabled)
+            send_event(ws, state, {"type": "proactive_status",
+                                    "enabled": state.proactive_enabled})
+
         elif msg_type == "frame":
             pass  # no longer needed; image comes with utterance
         elif msg_type == "ping":

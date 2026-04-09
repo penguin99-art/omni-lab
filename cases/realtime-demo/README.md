@@ -18,6 +18,7 @@ support.
 | **State Machine** | `loading → listening → processing → speaking` with visual glow |
 | **Waveform** | Real-time frequency bar visualization |
 | **Camera** | Mirrored selfie view, frame captured at speech-end |
+| **Proactive Vision** | Periodic frame diff → auto-analyse camera changes → voice report |
 | **Auto-reconnect** | WebSocket reconnects on disconnect (2s backoff) |
 | **Conversation Memory** | Server maintains per-session chat history (last 20 turns) |
 | **Language Mirroring** | Model replies in the same language the user speaks |
@@ -40,6 +41,10 @@ Grant microphone and camera permissions. Speak naturally — the assistant
 responds with voice. Speak again while it's talking to interrupt (barge-in).
 Or type text and press Enter to bypass ASR.
 
+Click **"Watch Off"** to toggle **Proactive Vision** — the assistant will
+periodically monitor the camera, detect visual changes, and proactively
+describe what it sees via TTS.
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -53,6 +58,10 @@ Or type text and press Enter to bypass ASR.
 | `REALTIME_DEMO_ASR` | `faster-whisper` | ASR backend |
 | `REALTIME_DEMO_WHISPER_MODEL` | `base` | Whisper model size |
 | `REALTIME_DEMO_WHISPER_LANGUAGE` | `zh` | ASR language lock (`auto` for any) |
+| `REALTIME_DEMO_PROACTIVE_VISION` | `false` | Enable proactive vision on startup |
+| `REALTIME_DEMO_PROACTIVE_INTERVAL` | `5` | Frame capture interval (seconds) |
+| `REALTIME_DEMO_PROACTIVE_DIFF_THRESHOLD` | `0.06` | Frame diff threshold (0~1) |
+| `REALTIME_DEMO_PROACTIVE_COOLDOWN` | `15` | Min seconds between proactive inferences |
 
 ## Architecture
 
@@ -61,8 +70,10 @@ Browser                          Server (Flask + WebSocket)
 ───────                          ─────────────────────────
 Mic → Silero VAD ──────────────→ faster-whisper ASR
 Camera → JPEG capture            │  (Simplified Chinese bias)
-                                 ├─→ Ollama streaming LLM
-                                 │     (gemma4:e2b + vision)
+  │                              ├─→ Ollama streaming LLM
+  │                              │     (gemma4:e2b + vision)
+  │                              │
+  └─ [Watch] frame diff ───────→ proactive vision (cooldown + __SKIP__)
                                  │
 AudioContext ←── PCM chunks ←──── TTS (Kokoro / Edge / flite)
   (gapless scheduling)            (auto Chinese/English voice)
@@ -80,6 +91,8 @@ AudioContext ←── PCM chunks ←──── TTS (Kokoro / Edge / flite)
 - `{ audio: "wav_b64", image: "jpeg_b64" }` — voice utterance with camera frame
 - `{ type: "interrupt" }` — barge-in (stop current response)
 - `{ type: "text_input", text: "..." }` — typed text input
+- `{ type: "vision_watch", image: "jpeg_b64" }` — proactive vision frame
+- `{ type: "proactive_toggle", enabled: true }` — enable/disable proactive vision
 
 **Server → Client:**
 - `{ type: "ready", config: {...}, asr: {...}, tts: {...} }`
@@ -89,6 +102,8 @@ AudioContext ←── PCM chunks ←──── TTS (Kokoro / Edge / flite)
 - `{ type: "audio_chunk", audio: "pcm_int16_b64", index: 0 }` — TTS audio
 - `{ type: "audio_end", tts_time: 1.23 }` — end PCM stream
 - `{ type: "text", text: "full response", llm_time: 1.97 }` — final response
+- `{ type: "proactive_observation", text: "...", llm_time: 2.1 }` — vision observation
+- `{ type: "proactive_status", enabled: true }` — proactive toggle ack
 
 ## Dependencies
 
@@ -103,4 +118,5 @@ AudioContext ←── PCM chunks ←──── TTS (Kokoro / Edge / flite)
   energy-based VAD if WASM loading fails
 - `faster-whisper` downloads the Whisper model on first use (~150MB)
 - Edge TTS requires internet access; for fully offline use, install Kokoro ONNX
-- Camera frames are sent only with voice utterances, not continuously
+- Camera frames are sent only with voice utterances unless proactive vision is enabled
+- Proactive vision uses client-side pixel diff to filter unchanged frames; model may still return `__SKIP__` for uninteresting scenes
