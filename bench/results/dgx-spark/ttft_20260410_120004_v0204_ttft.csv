@@ -1,0 +1,13 @@
+timestamp,platform_name,platform_gpu,platform_memory_gb,model_name,engine,case_id,prompt_size,cache_state,trial,system_prompt_chars,user_prompt_chars,ttft_sec,wall_sec,output_tokens,mem_used_before_gb,mem_peak_gb,mem_used_after_gb,swap_used_before_gb,swap_peak_gb,swap_used_after_gb,memory_pressure_note,content_preview,error
+2026-04-10T11:59:38.609783,dgx-spark,GB10,122,gemma4:e2b,ollama,short_cold,short,cold,1,87,41,1.4532,1.45,128,87.27,87.28,87.28,7.8,7.8,7.8,stable,,
+2026-04-10T11:59:40.063919,dgx-spark,GB10,122,gemma4:e2b,ollama,short_cold,short,cold,2,87,41,1.4047,1.4,128,87.28,87.28,87.28,7.8,7.8,7.8,stable,,
+2026-04-10T11:59:41.469503,dgx-spark,GB10,122,gemma4:e2b,ollama,short_cold,short,cold,3,87,41,1.4102,1.41,128,87.28,87.28,87.28,7.8,7.8,7.8,stable,,
+2026-04-10T11:59:42.880701,dgx-spark,GB10,122,gemma4:e2b,ollama,short_warm,short,warm,1,46,41,1.4137,1.41,128,87.28,87.28,87.27,7.8,7.8,7.8,stable,,
+2026-04-10T11:59:45.740315,dgx-spark,GB10,122,gemma4:e2b,ollama,short_warm,short,warm,2,46,41,1.4149,1.41,128,87.27,87.28,87.27,7.8,7.8,7.8,stable,,
+2026-04-10T11:59:48.561105,dgx-spark,GB10,122,gemma4:e2b,ollama,short_warm,short,warm,3,46,41,1.4018,1.4,128,87.27,87.28,87.28,7.8,7.8,7.8,stable,,
+2026-04-10T11:59:51.343964,dgx-spark,GB10,122,gemma4:e2b,ollama,long_cold,long,cold,1,758,41,1.4486,1.45,128,87.28,87.28,87.27,7.8,7.8,7.8,stable,,
+2026-04-10T11:59:52.793523,dgx-spark,GB10,122,gemma4:e2b,ollama,long_cold,long,cold,2,758,41,1.4374,1.44,128,87.27,87.28,87.28,7.8,7.8,7.8,stable,,
+2026-04-10T11:59:54.231821,dgx-spark,GB10,122,gemma4:e2b,ollama,long_cold,long,cold,3,758,41,1.4291,1.43,128,87.28,87.28,87.27,7.8,7.8,7.8,stable,,
+2026-04-10T11:59:55.661799,dgx-spark,GB10,122,gemma4:e2b,ollama,long_warm,long,warm,1,717,41,1.4186,1.42,128,87.27,87.28,87.28,7.8,7.8,7.8,stable,,
+2026-04-10T11:59:58.518448,dgx-spark,GB10,122,gemma4:e2b,ollama,long_warm,long,warm,2,717,41,1.4397,1.44,128,87.28,87.29,87.28,7.8,7.8,7.8,stable,,
+2026-04-10T12:00:01.377239,dgx-spark,GB10,122,gemma4:e2b,ollama,long_warm,long,warm,3,717,41,1.418,1.42,128,87.28,87.29,87.29,7.8,7.8,7.8,stable,,

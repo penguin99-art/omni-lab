@@ -7,9 +7,9 @@
 - Python 3 可用：`python3 --version`
 - Ollama 服务可访问
 - 目标模型已经拉取完成
-- 如果要跑 Gemma 4，**必须使用 Ollama 0.20+**
+- 如果要跑 Gemma 4，**必须使用 Ollama 0.20+**（推荐 0.20.4+，gemma4:26b 可获得约 11% 提速）
 
-在当前 DGX Spark 环境中，Gemma 4 通过独立的 Ollama 0.20 实例运行：
+在当前 DGX Spark 环境中，Gemma 4 通过独立的 Ollama 0.20.4 实例运行：
 
 ```bash
 export OLLAMA_HOST=http://localhost:11436
@@ -19,7 +19,7 @@ curl -s $OLLAMA_HOST/api/version
 预期输出：
 
 ```json
-{"version":"0.20.0"}
+{"version":"0.20.4"}
 ```
 
 ## 2. 推荐流程

@@ -1,0 +1,5 @@
+timestamp,platform_name,platform_gpu,platform_memory_gb,model_name,engine,arch,active_params,size_gb,prompt_id,prompt_type,output_tokens,input_tokens,tok_per_sec,ttft_sec,wall_sec,tool_calls_count,tool_call_correct,mem_used_before_gb,mem_peak_gb,mem_used_after_gb,swap_used_before_gb,swap_peak_gb,swap_used_after_gb,memory_pressure_note,quality_score,quality_notes,content_preview,community_toks,error
+2026-04-10T11:59:20.134291,dgx-spark,GB10,122,gemma4:e2b,ollama,dense,2B,7.2,tool_weather,tool_call,282,94,106.51,0.024,2.96,1,True,87.22,87.24,87.23,7.8,7.8,7.8,stable,1.0,tool call emitted,,,
+2026-04-10T11:59:23.090711,dgx-spark,GB10,122,gemma4:e2b,ollama,dense,2B,7.2,tool_multi,tool_call,270,139,106.91,0.028,2.78,1,True,87.23,87.24,87.23,7.8,7.8,7.8,stable,1.0,tool call emitted,,,
+2026-04-10T11:59:25.873424,dgx-spark,GB10,122,gemma4:26b,ollama,moe,4B,18,tool_weather,tool_call,72,94,66.33,0.084,1.37,1,True,87.23,87.26,87.26,7.8,7.8,7.8,stable,1.0,tool call emitted,,,
+2026-04-10T11:59:27.245911,dgx-spark,GB10,122,gemma4:26b,ollama,moe,4B,18,tool_multi,tool_call,110,139,65.5,0.086,1.97,1,True,87.26,87.27,87.27,7.8,7.8,7.8,stable,1.0,tool call emitted,,,

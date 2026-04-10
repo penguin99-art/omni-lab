@@ -139,7 +139,7 @@ bench.py --platform auto
 1. **gemma4:e2b 效率惊人。** 109.8 tok/s，仅 7GB，效率达 15.2 tok/s/GB — 所有模型中最高
 2. **MoE 是带宽受限平台的甜点架构。** MoE 均值 50.7 tok/s vs Dense 38.6 tok/s，领先 31%
 3. **Q4_K_M 是最佳量化。** 更高精度反而更慢 (模型更大 → 带宽压力更大)
-4. **Ollama 版本很重要。** Gemma 4 需要 Ollama 0.20+，旧版本会静默返回空结果
+4. **Ollama 版本很重要。** Gemma 4 需要 Ollama 0.20+（推荐 0.20.4+，flash attention 可为 gemma4:26b 带来约 11% 提速），旧版本会静默返回空结果
 5. **统一内存架构需要 `--no-mmap`。** Spark/Orin 等统一内存平台使用 llama.cpp 必须禁用 mmap
 
 ---
@@ -185,6 +185,7 @@ python3 bench/bench.py --suite quick   # 跑起来
 | [Round 1: Qwen 系列基线](bench/RESULTS.md) | qwen3.5 全系列 (DGX Spark) |
 | [Round 2: Gemma 4 vs Qwen](bench/RESULTS_R2.md) | 5 模型全维度对比 (DGX Spark) |
 | [gemma4:26b vs qwen3.5:35b](bench/COMPARE_gemma4_26b_vs_qwen35.md) | 深度对比报告 |
+| [Ollama v0.20.0 vs v0.20.4](bench/results/dgx-spark/COMPARE_ollama_v0200_vs_v0204.md) | 升级对比: flash attention, tool call 改进 |
 | [Realtime Demo](cases/realtime-demo/README.md) | 本地语音 + 视觉 + 打断 demo 使用说明 |
 
 ### 自动报告内容

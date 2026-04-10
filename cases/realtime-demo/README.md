@@ -110,7 +110,7 @@ AudioContext ←── PCM chunks ←──── TTS (Kokoro / Edge / flite)
 - **Python**: Flask, flask-sock, httpx, numpy, faster-whisper, edge-tts, kokoro-onnx (optional)
 - **System**: ffmpeg (for Kokoro/flite/edge audio decoding)
 - **Browser**: Modern browser with WebRTC (mic/camera) and Web Audio API
-- **Ollama**: v0.20+ with `gemma4:e2b` (or other supported model)
+- **Ollama**: v0.20.4+ with `gemma4:e2b` (or other supported model)
 
 ## Known Limitations
 
